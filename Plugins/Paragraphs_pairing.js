@@ -2,6 +2,7 @@
 //@display-name ✌️ 원문-번역문 병기 v1.3.2
 //@api 3.0
 //@version 1.3.2
+//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Paragraphs_pairing.js
 
 (() => {
 
