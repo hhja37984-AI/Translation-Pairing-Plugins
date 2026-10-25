@@ -2,7 +2,7 @@
 //@display-name 💬 대사 병기 v1.3.2
 //@api 3.0
 //@version 1.3.2
-//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Dialogues_pairing.js
+//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/Plugins/Dialogues_pairing.js
 
 (() => {
 
