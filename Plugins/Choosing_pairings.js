@@ -1,13 +1,13 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.1
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.2
 //@api 3.0
-//@version 1.3.1
+//@version 1.3.2
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Choosing_pairings.js
 
 (() => {
 
 
-  const BUILD_LABEL = 'Versa · 병기 방식 선택';
+  const BUILD_LABEL = '병기 방식 선택';
   const DEFAULT_START_PATTERN = '/^[ \\t]*#{1,6}[ \\t]+source[ \\t]*:?[ \\t]*$/im';
   const DEFAULT_GLOSSARY_WRAPPER_TOP =
     '# Translation Guidelines\n' +
