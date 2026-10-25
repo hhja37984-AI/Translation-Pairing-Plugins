@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name 💬 대사 병기 v1.3.1
+//@display-name 💬 대사 병기 v1.3.2
 //@api 3.0
-//@version 1.3.1
+//@version 1.3.2
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Dialogues_pairing.js
 
 (() => {
@@ -22,6 +22,14 @@
   const RULE_STORAGE_KEY = 'bilingual_translation_rules_v1';
   const CONFIG_STORAGE_KEY = 'bilingual_translation_config_v1';
   const pendingSources = [];
+  let pendingSourceGeneration = 0;
+
+  function clearPendingSources() {
+    const count = pendingSources.length;
+    pendingSources.length = 0;
+    pendingSourceGeneration += 1;
+    return count;
+  }
   const RETRY_GUARD_MARKER = '<!-- start -->';
 
   function findRetryGuard(messages) {
@@ -34,6 +42,7 @@
   }
 
   function capturePendingSource(messages, pending, config) {
+    if (pending.generation !== pendingSourceGeneration) return messages;
     if (!config.retryGuardEnabled) {
       pendingSources.push(pending);
       return messages;
@@ -1601,7 +1610,18 @@
 
     const footer = document.createElement('div');
     footer.className = 'bt-settings-footer';
-    footer.append(status, save);
+    const clearSources = document.createElement('button');
+    clearSources.type = 'button';
+    clearSources.className = 'bt-save';
+    clearSources.textContent = '수집한 원문 비우기';
+    clearSources.style.marginBottom = '8px';
+    clearSources.title = '번역이 끝나거나 중단된 뒤 사용하세요. 병기 대기 중인 원문을 모두 비웁니다.';
+    clearSources.addEventListener('click', () => {
+      const count = clearPendingSources();
+      status.dataset.error = 'false';
+      status.textContent = `수집한 원문 ${count}건을 비웠습니다.`;
+    });
+    footer.append(status, clearSources, save);
 
     const scroll = document.createElement('div');
     scroll.className = 'bt-settings-scroll';
@@ -2878,20 +2898,23 @@
   const beforeRequestHandler = async (messages, type) => {
     if (type !== 'translate') return messages;
 
+    const generation = pendingSourceGeneration;
     const config = await getConfig();
+    if (generation !== pendingSourceGeneration) return messages;
     if (config.pluginEnabled && config.retryGuardEnabled && findRetryGuard(messages)) {
       log(config, 'retry guard: already processed request; skipping repeated capture and injection.');
       return messages;
     }
     if (!config.pluginEnabled) {
-      pendingSources.push({ disabled: true, capturedAt: Date.now() });
+      pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
       return messages;
     }
     if (glossarySaveTimer) await persistGlossaryStateNow(memoryGlossaryState);
     await glossarySaveChain;
     const glossary = await loadGlossaryState();
+    if (generation !== pendingSourceGeneration) return messages;
     if (!config.enabled && !config.translationContextEnabled && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
-      pendingSources.push({ disabled: true, capturedAt: Date.now() });
+      pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
       return messages;
     }
     const extracted = extractSource(messages, config);
@@ -2899,6 +2922,7 @@
 
     const pending = {
       ...extracted,
+      generation,
       capturedAt: Date.now(),
     };
 
@@ -2954,12 +2978,13 @@
     if (type !== 'translate') return content;
 
     const pending = pendingSources.shift();
+    const generation = pendingSourceGeneration;
     const config = await getConfig();
     if (pending?.retryGuardMarker || (config.pluginEnabled && config.retryGuardEnabled)) {
       content = stripRetryGuardFromResponse(content);
     }
 
-    if (pending?.disabled || !config.pluginEnabled || !config.enabled) return content;
+    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) return content;
 
     if (!pending?.source) {
       warn(config, 'no captured source; returning translation unchanged.');
@@ -3014,7 +3039,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Dialogue v1.3.0 loaded.');
+      log(config, 'Dialogue v1.3.2 loaded.');
     } catch (error) {
       console.error(
         `[Vox] initialization failed: ${error?.message ?? error}`
