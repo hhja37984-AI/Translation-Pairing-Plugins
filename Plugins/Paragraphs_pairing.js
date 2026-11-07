@@ -3124,24 +3124,25 @@
     }
   }
 
-  function renderMarkdownPair(sourceBlock, translatedBlock, config, index) {
+  function renderMarkdownPair(sourceBlock, translatedBlock, config, index, originals) {
     const sourceText = sourceBlock?.text ?? '';
-    const translatedText = translatedBlock?.text ?? '';
+    const maskedText = translatedBlock?.text ?? '';
 
-    if (sourceText && shouldExcludeSource(sourceText, config)) {
+    const excluded = sourceText && shouldExcludeSource(sourceText, config);
+    if (excluded) {
       log(config, `source block ${index + 1} excluded by pattern`);
+    }
+    if (!sourceText || excluded) {
       return {
-        text: translatedText,
+        text: restoreSourceMatches(maskedText, originals),
         markdown: translatedBlock?.type !== 'normal',
       };
     }
 
-    if (!sourceText) {
-      return {
-        text: translatedText,
-        markdown: translatedBlock?.type !== 'normal',
-      };
-    }
+    const unmaskedText = originals?.size
+      ? maskedText.replace(/\[\[P\d+\]\]/g, token => originals.has(token) ? '' : token)
+      : maskedText;
+    const translatedText = unmaskedText === maskedText ? maskedText : unmaskedText.trim();
 
     if (!translatedText) {
       return {
@@ -3165,7 +3166,7 @@
       case 'ordered-list': {
         const rendered = renderInterleavedList(
           sourceBlock,
-          translatedBlock,
+          { ...translatedBlock, text: translatedText },
           config
         );
         return rendered
@@ -3317,10 +3318,9 @@
   function makeBilingual(source, translated, config, meta = {}) {
     const rawTranslated = String(translated ?? '');
     const {
-      text: maskedTranslated,
+      text: cleanedTranslated,
       reasoningBlocks,
     } = cleanTranslationOutput(rawTranslated, config);
-    const cleanedTranslated = restoreSourceMatches(maskedTranslated, meta.originals);
 
     const sourceBlocks = splitMarkdownBlocks(source);
     const translatedBlocks = splitMarkdownBlocks(cleanedTranslated);
@@ -3346,7 +3346,7 @@
 
     for (let i = 0; i < maxLength; i++) {
       renderedBlocks.push(
-        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i)
+        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i, meta.originals)
       );
     }
 
