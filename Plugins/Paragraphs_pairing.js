@@ -129,6 +129,7 @@
   let ruleSaveChain = Promise.resolve();
   const expandedRuleIds = {
     exclude: new Set(),
+    protect: new Set(),
     translation: new Set(),
     context: new Set(),
   };
@@ -191,6 +192,7 @@
       version: 1,
       translationRules: [],
       excludeRules: [],
+      protectRules: [],
       contextRules: [],
     };
   }
@@ -211,8 +213,8 @@
           }))
       : [];
 
-    const excludeRules = Array.isArray(source.excludeRules)
-      ? source.excludeRules
+    const normalizeMatchRules = (rules) => Array.isArray(rules)
+      ? rules
           .filter((rule) => rule && typeof rule === 'object')
           .map((rule) => ({
             id: String(rule.id || makeRuleId()),
@@ -239,7 +241,8 @@
       ...source,
       version: 1,
       translationRules,
-      excludeRules,
+      excludeRules: normalizeMatchRules(source.excludeRules),
+      protectRules: normalizeMatchRules(source.protectRules),
       contextRules,
     };
   }
@@ -787,6 +790,7 @@
       translationStripPatterns,
       translationRules: ruleState.translationRules,
       uiExcludeRules: ruleState.excludeRules,
+      protectRules: ruleState.protectRules,
       contextRules: ruleState.contextRules,
       debug,
     };
@@ -813,8 +817,8 @@
 
     let flags = '';
     if (
-      (type === 'translation' || type === 'context') &&
-      rule.global !== false
+      type === 'protect' ||
+      ((type === 'translation' || type === 'context') && rule.global !== false)
     ) flags += 'g';
     if (rule.ignoreCase === true) flags += 'i';
     return new RegExp(input, flags);
@@ -1679,7 +1683,7 @@
     let globalInput = null;
     let ignoreCaseInput = null;
 
-    if (activeTab === 'exclude') {
+    if (activeTab === 'exclude' || activeTab === 'protect') {
       const flags = document.createElement('div');
       flags.className = 'bt-flags';
       const iLabel = document.createElement('label');
@@ -1724,7 +1728,7 @@
       flags.append(gLabel, iLabel);
       outputLabel.appendChild(flags);
       editor.appendChild(outputLabel);
-    } else {
+    } else if (activeTab === 'exclude') {
       const outputHint = document.createElement('div');
       outputHint.className = 'bt-field';
       outputHint.innerHTML = '<span class="bt-label">OUT:</span>';
@@ -1828,6 +1832,7 @@
   }
 
   function getRuleSectionMeta(type) {
+    if (type === 'protect') return { key: 'protectRules', label: '(임시)' };
     if (type === 'translation') {
       return {
         key: 'translationRules',
@@ -1869,7 +1874,7 @@
     title.className = 'bt-regex-heading-title';
     title.textContent = meta.label;
     heading.appendChild(title);
-    heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
+    if (meta.tooltip) heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
     section.appendChild(heading);
     if (meta.description) {
       const description = document.createElement('span');
@@ -2198,6 +2203,7 @@
       regexPage.className = 'bt-regex-page';
       regexPage.append(
         renderSingleRuleSection(state, 'exclude'),
+        renderSingleRuleSection(state, 'protect'),
         renderSingleRuleSection(state, 'translation'),
         renderSingleRuleSection(state, 'context')
       );
@@ -2343,6 +2349,93 @@
       sourceEnd: -1,
       rawSourceStartPreview: '',
     };
+  }
+
+  function protectSourceMatches(messages, extracted, config) {
+    const { source, sourceStart, sourceEnd, messageIndex } = extracted;
+    const ranges = [];
+    for (const rule of config.protectRules) {
+      if (!rule.input) continue;
+      try {
+        for (const match of source.matchAll(compileUiRegex(rule, 'protect'))) {
+          if (match[0]) ranges.push({ start: match.index, end: match.index + match[0].length });
+        }
+      } catch (error) {
+        warn(config, `invalid source protection regex "${getRuleLabel(rule)}": ${error?.message ?? error}`);
+      }
+    }
+    if (!ranges.length) return null;
+
+    // Merge overlaps so each character is masked and restored only once.
+    ranges.sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const range of ranges) {
+      const previous = merged[merged.length - 1];
+      if (previous && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
+      else merged.push(range);
+    }
+
+    const usedTokens = new Set(messages.flatMap(message =>
+      getMessageContent(message).match(/\[\[P\d+\]\]/g) ?? []
+    ));
+    const originals = new Map();
+    let nextId = 1;
+    for (const range of merged) {
+      let token;
+      do {
+        token = `[[P${nextId++}]]`;
+      } while (usedTokens.has(token));
+      range.token = token;
+      originals.set(token, source.slice(range.start, range.end));
+    }
+
+    const message = messages[messageIndex];
+    const content = getMessageContent(message);
+    const rawSource = content.slice(sourceStart, sourceEnd);
+    const offset = sourceStart + rawSource.length - rawSource.trimStart().length;
+    let maskedSource = '';
+    let cursor = 0;
+    for (const { start, end, token } of merged) {
+      maskedSource += source.slice(cursor, start) + token;
+      cursor = end;
+    }
+    maskedSource += source.slice(cursor);
+
+    let partOffset = 0;
+    let rangeIndex = 0;
+    const maskPart = (part) => {
+      const partStart = partOffset;
+      partOffset += part.length;
+      let result = '';
+      let cursor = 0;
+      while (rangeIndex < merged.length) {
+        const { start, end, token } = merged[rangeIndex];
+        const localStart = offset + start - partStart;
+        const localEnd = offset + end - partStart;
+        if (localStart >= part.length) break;
+        if (localStart >= 0) result += part.slice(cursor, localStart) + token;
+        cursor = localEnd;
+        if (localEnd > part.length) break;
+        rangeIndex++;
+      }
+      return result + part.slice(cursor);
+    };
+
+    const nextContent = Array.isArray(message.content)
+      ? message.content.map(part => {
+          if (typeof part === 'string') return maskPart(part);
+          if (typeof part?.text === 'string') return { ...part, text: maskPart(part.text) };
+          return part;
+        })
+      : maskPart(content);
+    const nextMessages = messages.slice();
+    nextMessages[messageIndex] = { ...message, content: nextContent };
+    return { messages: nextMessages, source: maskedSource, originals };
+  }
+
+  function restoreSourceMatches(text, originals) {
+    if (!originals?.size || typeof text !== 'string') return text;
+    return text.replace(/\[\[P\d+\]\]/g, token => originals.get(token) ?? token);
   }
 
   /* ---------------- Recent chat context ---------------- */
@@ -3224,9 +3317,10 @@
   function makeBilingual(source, translated, config, meta = {}) {
     const rawTranslated = String(translated ?? '');
     const {
-      text: cleanedTranslated,
+      text: maskedTranslated,
       reasoningBlocks,
     } = cleanTranslationOutput(rawTranslated, config);
+    const cleanedTranslated = restoreSourceMatches(maskedTranslated, meta.originals);
 
     const sourceBlocks = splitMarkdownBlocks(source);
     const translatedBlocks = splitMarkdownBlocks(cleanedTranslated);
@@ -3295,7 +3389,7 @@
     await glossarySaveChain;
     const glossary = await loadGlossaryState();
     if (generation !== pendingSourceGeneration) return messages;
-    if (!config.enabled && !config.translationContextEnabled && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
+    if (!config.enabled && !config.translationContextEnabled && !config.protectRules.some(rule => rule.input) && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
       pendingSources.push({ disabled: true, capturedAt: Date.now() });
       return messages;
     }
@@ -3310,14 +3404,25 @@
 
     log(config, `captured source (${source.length} chars)`);
 
-    const glossaryBlock = source ? collectGlossaryGuidance(source, glossary, config) : '';
+    const protection = source && protectSourceMatches(messages, extracted, config);
+    let requestMessages = protection?.messages ?? messages;
+    pending.originals = protection?.originals;
+
+    const glossaryBlock = source
+      ? collectGlossaryGuidance(protection?.source ?? source, glossary, config)
+      : '';
+    const guidance = [
+      glossaryBlock,
+      protection
+        ? 'Copy each numbered placeholder (such as [[P1]]) into the translation exactly as written, once, at the corresponding position.'
+        : '',
+    ].filter(Boolean).join('\n\n');
     if (!source || !config.translationContextEnabled) {
       return capturePendingSource(
-        appendGlossaryGuidance(messages, glossaryBlock), pending, config
+        appendGlossaryGuidance(requestMessages, guidance), pending, config
       );
     }
 
-    let requestMessages = messages;
     try {
       const contextResult = await resolveRecentContext(extracted, config);
       if (!contextResult) {
@@ -3339,7 +3444,7 @@
             `lookupMs=${contextResult.lookupMs.toFixed(2)}`
         );
         requestMessages = injectRecentContext(
-          messages,
+          requestMessages,
           extracted,
           contextResult
         );
@@ -3352,7 +3457,7 @@
     }
 
     return capturePendingSource(
-      appendGlossaryGuidance(requestMessages, glossaryBlock), pending, config
+      appendGlossaryGuidance(requestMessages, guidance), pending, config
     );
   };
 
@@ -3366,7 +3471,9 @@
       content = stripRetryGuardFromResponse(content);
     }
 
-    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) return content;
+    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) {
+      return restoreSourceMatches(content, pending?.originals);
+    }
 
     if (!pending?.source) {
       warn(config, 'no captured source; returning translation unchanged.');
@@ -3384,7 +3491,7 @@
       console.error(
         `[Bilingual Translation] post-processing failed: ${error?.message ?? error}`
       );
-      return content;
+      return restoreSourceMatches(content, pending.originals);
     }
   };
 
