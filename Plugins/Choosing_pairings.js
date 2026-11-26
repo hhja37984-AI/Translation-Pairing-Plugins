@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.7
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.8
 //@api 3.0
-//@version 1.3.7
+//@version 1.3.8
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -175,6 +175,7 @@
       enabled: '1',
       output_mode: 'bilingual',
       dialogue_source_position: 'outside',
+      paragraph_source_position: 'above',
       uppercase_block_pairing: '1',
       source_message_role: 'any',
       source_start_pattern: DEFAULT_START_PATTERN,
@@ -736,6 +737,7 @@
     const outputMode = requestedOutputMode === 'dialogue'
       ? 'dialogue'
       : 'bilingual';
+    const paragraphSourcePosition = getString('paragraph_source_position', 'above') === 'below' ? 'below' : 'above';
     const dialogueSourcePosition = getString(
       'dialogue_source_position',
       'outside'
@@ -823,6 +825,7 @@
       enabled,
       outputMode,
       dialogueSourcePosition: validDialoguePosition,
+      paragraphSourcePosition,
       uppercaseBlockPairing,
       sourceMessageRole,
       sourceStartPattern,
@@ -1050,6 +1053,7 @@
         .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
         .bt-option-source { color: var(--bt-option-source, #b6997c); }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
+        #bt-clear-sources { height: 56px; min-height: 56px; max-height: 56px; padding-block: 6px; line-height: 1.3; overflow: hidden; }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
         #bt-clear-sources[data-notice="true"] { font-size: 0.86rem; font-weight: 400; }
         .bt-settings-footer > .bt-status:empty { display: none; }
@@ -1081,7 +1085,9 @@
         .bt-toggle-field .bt-label { margin-bottom: 3px; }
         .bt-toggle-field .bt-description { grid-column: 1; margin: 0; }
         .bt-toggle-field input { grid-column: 2; grid-row: 1 / span 2; width: 21px; height: 21px; accent-color: var(--bt-selected); }
-        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 10px 0 26px; }
+        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 90%; margin: 10px auto 12px; }
+        .bt-operation-status { grid-column: 1 / -1; margin: 0; }
+        .bt-operation-status:empty { display: none; }
         .bt-top-toggle { min-width: 0; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; padding: 12px; }
         .bt-top-toggle .bt-label { min-width: 0; margin: 0; font-size: 0.92rem; line-height: 1.32; overflow-wrap: anywhere; }
         .bt-top-toggle .bt-label-with-icon { align-items: flex-start; gap: 6px; }
@@ -1105,7 +1111,7 @@
         .bt-error { min-height: 1.4em; margin: -5px 0 10px; color: #d66f6f; font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status { text-align: center; min-height: 1.4em; margin: 0 0 8px; color: var(--bt-muted); font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status[data-error="true"] { color: #d66f6f; }
-        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 8px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
+        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 16px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
         .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
         .bt-wrap, .bt-settings-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-border) 72%, transparent) transparent; }
         .bt-wrap::-webkit-scrollbar, .bt-settings-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -1146,7 +1152,7 @@
           .bt-error, .bt-status { font-size: 0.9rem; }
           .bt-help { margin-right: 3px; }
           .bt-inline-editor { padding: 17px 13px 2px; }
-          .bt-top-toggle-grid { gap: 6px; margin-top: 6px;}
+          .bt-top-toggle-grid { width: 100%; gap: 6px; margin-top: 6px; }
           .bt-top-toggle { padding: 10px 8px; column-gap: 5px; }
           .bt-top-toggle .bt-label { font-size: 0.74rem; }
           .bt-top-toggle .bt-label-with-icon { gap: 4px; }
@@ -1377,13 +1383,11 @@
     return { wrapper, closeMenu: () => setOpened(false) };
   }
 
-  function renderSettingsPanel() {
+  function createOperationControls() {
     if (!settingsDraft) resetSettingsDraft();
-    const app = document.getElementById('bt-app');
-    const settings = document.createElement('section');
-    settings.className = 'bt-settings';
     const inputs = new Map();
-
+    const status = document.createElement('div');
+    status.className = 'bt-status bt-operation-status';
     const topToggleGrid = document.createElement('div');
     topToggleGrid.className = 'bt-top-toggle-grid';
     const topToggleFields = new Map();
@@ -1474,7 +1478,18 @@
     pluginToggle?.addEventListener('change', syncPluginDependentToggles);
     syncPluginDependentToggles();
 
-    settings.appendChild(topToggleGrid);
+    topToggleGrid.appendChild(status);
+    return topToggleGrid;
+  }
+
+  function renderSettingsPanel() {
+    if (!settingsDraft) resetSettingsDraft();
+    const app = document.getElementById('bt-app');
+    const settings = document.createElement('section');
+    settings.className = 'bt-settings';
+    const inputs = new Map();
+
+
 
     const items = [
       ...(getUiMode() === 'dialogue' ? [
@@ -1496,6 +1511,31 @@
         type: 'checkbox',
         label: '대문자 병기',
         description: '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: 캐릭터 (CHARACTER)',
+      },
+      ] : []),
+      ...(getUiMode() === 'bilingual' ? [
+      { divider: '원문-번역문 사이 설정' },
+      {
+        key: 'paragraph_source_position',
+        type: 'select',
+        label: '원문 문단 삽입 위치',
+        description: '',
+        options: [
+          ['above', '위: 원문→번역문'],
+          ['below', '아래: 번역문→원문'],
+        ],
+      },
+      {
+        key: 'source_translation_separator',
+        label: '원문-번역문 사이 구분자',
+        description: 'NONE=없음 (기본: \\n)',
+        placeholder: '\\n',
+      },
+      {
+        key: 'pair_separator',
+        label: '원문+번역문 문단 사이 구분자',
+        description: 'NONE=없음 (기본: \\n\\n)',
+        placeholder: '\\n\\n',
       },
       ] : []),
       { divider: '번역 원문 찾기' },
@@ -1546,21 +1586,7 @@
         description: '원문 <span>에 class 명을 추가합니다. (기본: 없음)',
         placeholder: '(비우면 생략)',
       },
-      ...(getUiMode() === 'bilingual' ? [
-      { divider: '원문-번역문 사이 설정' },
-      {
-        key: 'source_translation_separator',
-        label: '원문-번역문 사이 구분자',
-        description: 'NONE=없음 (기본: \\n)',
-        placeholder: '\\n',
-      },
-      {
-        key: 'pair_separator',
-        label: '원문+번역문 문단 사이 구분자',
-        description: 'NONE=없음 (기본: \\n\\n)',
-        placeholder: '\\n\\n',
-      },
-      ] : []),
+
       { divider: '이전 메시지 제공' },
       {
         key: 'translation_context_messages',
@@ -2510,6 +2536,7 @@
 
     const { wrapper: modeHeader, closeMenu } = createModeHeader(state, activeTab);
     fixedTop.appendChild(modeHeader);
+    fixedTop.appendChild(createOperationControls());
     app.onclick = event => { if (!modeHeader.contains(event.target)) closeMenu(); };
     enableFloatingWindowDrag(app, modeHeader.querySelector('.bt-head'));
 
@@ -3396,8 +3423,10 @@
       const translatedItem = parseListLine(translatedLines[i], translatedBlock.type);
       if (!sourceItem || !translatedItem) return null;
 
-      output.push(`${sourceItem.prefix}${formatSource(sourceItem.content, config)}`);
-      output.push(`${translatedItem.prefix}${translatedItem.content}`);
+      const original = `${sourceItem.prefix}${formatSource(sourceItem.content, config)}`;
+      const translation = `${translatedItem.prefix}${translatedItem.content}`;
+      output.push(...(config.paragraphSourcePosition === 'below'
+        ? [translation, original] : [original, translation]));
     }
 
     return output.join('\n');
@@ -3481,106 +3510,54 @@
     }
   }
 
+  function joinParagraphPair(original, translation, separator, config) {
+    return config.paragraphSourcePosition === 'below'
+      ? translation + separator + original
+      : original + separator + translation;
+  }
+
   function renderMarkdownPair(sourceBlock, translatedBlock, config, index, originals) {
     const sourceText = sourceBlock?.text ?? '';
     const maskedText = translatedBlock?.text ?? '';
-
     const excluded = sourceText && shouldExcludeSource(sourceText, config);
-    if (excluded) {
-      log(config, `source block ${index + 1} excluded by pattern`);
-    }
+    if (excluded) log(config, `source block ${index + 1} excluded by pattern`);
     if (!sourceText || excluded) {
       return {
         text: restoreSourceMatches(maskedText, originals),
         markdown: translatedBlock?.type !== 'normal',
       };
     }
-
     const unmaskedText = originals?.size
       ? maskedText.replace(/\[\[P\d+\]\]/g, token => originals.has(token) ? '' : token)
       : maskedText;
     const translatedText = unmaskedText === maskedText ? maskedText : unmaskedText.trim();
-
     if (!translatedText) {
-      return {
-        text: renderSourceOnly(sourceBlock, config),
-        markdown: sourceBlock.type !== 'normal',
-      };
+      return { text: renderSourceOnly(sourceBlock, config), markdown: sourceBlock.type !== 'normal' };
     }
-
-    if (sourceBlock.type !== translatedBlock.type) {
-      return {
-        text: `${sourceText}${makeMarkdownSeparator(
-          config.sourceTranslationSeparator,
-          true
-        )}${translatedText}`,
-        markdown: true,
-      };
-    }
-
+    const markdownPair = (original, blankLine = true) => ({
+      text: joinParagraphPair(original, translatedText,
+        makeMarkdownSeparator(config.sourceTranslationSeparator, blankLine), config),
+      markdown: true,
+    });
+    if (sourceBlock.type !== translatedBlock.type) return markdownPair(sourceText);
     switch (sourceBlock.type) {
       case 'unordered-list':
       case 'ordered-list': {
-        const rendered = renderInterleavedList(
-          sourceBlock,
-          { ...translatedBlock, text: translatedText },
-          config
-        );
-        return rendered
-          ? { text: rendered, markdown: true }
-          : {
-              text: `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-              markdown: true,
-            };
+        const rendered = renderInterleavedList(sourceBlock, { ...translatedBlock, text: translatedText }, config);
+        return rendered ? { text: rendered, markdown: true } : markdownPair(sourceText);
       }
-
       case 'heading':
-        return {
-          text: `${renderHeadingSource(
-            sourceBlock,
-            config
-          )}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            false
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(renderHeadingSource(sourceBlock, config), false);
       case 'quote':
       case 'code':
-        return {
-          text: `${sourceText}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            true
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(sourceText);
       case 'table':
-        return {
-          text: tablesAreCompatible(sourceBlock, translatedBlock)
-            ? `${renderTableSource(
-                sourceBlock,
-                config
-              )}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`
-            : `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(tablesAreCompatible(sourceBlock, translatedBlock)
+          ? renderTableSource(sourceBlock, config) : sourceText);
       default:
         return {
-          text: `${formatSource(sourceText, config)}${
-            config.sourceTranslationSeparator
-          }${translatedText}`,
+          text: joinParagraphPair(formatSource(sourceText, config), translatedText,
+            config.sourceTranslationSeparator, config),
           markdown: false,
         };
     }
@@ -4130,7 +4107,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.7 loaded.');
+      log(config, 'Versa v1.3.8 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
