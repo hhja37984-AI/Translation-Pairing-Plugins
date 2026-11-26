@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.2
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.4.0
 //@api 3.0
-//@version 1.3.2
+//@version 1.4.0
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Choosing_pairings.js
 
 (() => {
@@ -23,11 +23,55 @@
   const CONFIG_STORAGE_KEY = 'bilingual_translation_config_v1';
   const pendingSources = [];
   let pendingSourceGeneration = 0;
+  let pendingSourceNotice = '';
+  let pendingSourceNoticeTimer = null;
+  let pendingSourceClearSnapshot = null;
+
+  function syncPendingSourcesButton() {
+    if (pendingSourceClearSnapshot &&
+        (pendingSourceClearSnapshot.length !== pendingSources.length ||
+         pendingSourceClearSnapshot.some((source, index) => source !== pendingSources[index]))) {
+      pendingSourceClearSnapshot = null;
+      pendingSourceNotice = '';
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      pendingSourceNoticeTimer = null;
+    }
+    if (typeof document === 'undefined') return;
+    const button = document.getElementById('bt-clear-sources');
+    if (!button) return;
+    button.disabled = pendingSources.length === 0;
+    setButtonLabel(button, `수집한 원문 (${pendingSources.length}개) 비우기`);
+    setButtonNotice(button, pendingSourceNotice);
+  }
+
+  function setButtonLabel(button, text) {
+    let label = button.querySelector('.bt-button-label');
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'bt-button-label';
+      label.setAttribute('aria-hidden', 'true');
+      button.replaceChildren(label);
+    }
+    label.textContent = text;
+  }
+
+  function setButtonNotice(button, message = '') {
+    if (!button) return;
+    const changed = button.dataset.noticeText !== message;
+    button.dataset.notice = String(Boolean(message));
+    button.dataset.noticeText = message;
+    button.setAttribute('aria-label', message || button.querySelector('.bt-button-label')?.textContent || '');
+    if (changed && message) {
+      const announcement = document.getElementById('bt-button-announcement');
+      if (announcement) announcement.textContent = message;
+    }
+  }
 
   function clearPendingSources() {
     const count = pendingSources.length;
     pendingSources.length = 0;
     pendingSourceGeneration += 1;
+    syncPendingSourcesButton();
     return count;
   }
   const RETRY_GUARD_MARKER = '<!-- start -->';
@@ -45,6 +89,7 @@
     if (pending.generation !== pendingSourceGeneration) return messages;
     if (!config.retryGuardEnabled) {
       pendingSources.push(pending);
+      syncPendingSourcesButton();
       return messages;
     }
     const result = messages.slice();
@@ -62,6 +107,7 @@
     }
     pending.retryGuardMarker = RETRY_GUARD_MARKER;
     pendingSources.push(pending);
+    syncPendingSourcesButton();
     return result;
   }
 
@@ -123,13 +169,18 @@
 
   function syncUnsavedNotice() {
     const notice = document.getElementById('bt-unsaved-notice');
-    if (notice) notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    if (notice) {
+      notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+      const head = notice.closest('.bt-head');
+      if (head) head.dataset.unsaved = String(!notice.hidden);
+    }
   }
 
   let ruleSaveTimer = null;
   let ruleSaveChain = Promise.resolve();
   const expandedRuleIds = {
     exclude: new Set(),
+    protect: new Set(),
     translation: new Set(),
     context: new Set(),
   };
@@ -151,6 +202,7 @@
       enabled: '1',
       output_mode: 'bilingual',
       dialogue_source_position: 'outside',
+      paragraph_source_position: 'above',
       uppercase_block_pairing: '1',
       source_message_role: 'any',
       source_start_pattern: DEFAULT_START_PATTERN,
@@ -195,6 +247,8 @@
       version: 1,
       translationRules: [],
       excludeRules: [],
+      protectRules: [createAssetMaidExampleRule()],
+      assetMaidExampleSeeded: true,
       contextRules: [],
     };
   }
@@ -215,8 +269,8 @@
           }))
       : [];
 
-    const excludeRules = Array.isArray(source.excludeRules)
-      ? source.excludeRules
+    const normalizeMatchRules = (rules) => Array.isArray(rules)
+      ? rules
           .filter((rule) => rule && typeof rule === 'object')
           .map((rule) => ({
             id: String(rule.id || makeRuleId()),
@@ -239,11 +293,19 @@
           }))
       : [];
 
+    const protectRules = normalizeMatchRules(source.protectRules);
+    if (source.assetMaidExampleSeeded !== true) {
+      const example = createAssetMaidExampleRule();
+      if (!protectRules.some(rule => rule.input === example.input)) protectRules.push(example);
+    }
+
     return {
       ...source,
       version: 1,
       translationRules,
-      excludeRules,
+      excludeRules: normalizeMatchRules(source.excludeRules),
+      protectRules,
+      assetMaidExampleSeeded: true,
       contextRules,
     };
   }
@@ -402,6 +464,9 @@
 
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       memoryRuleState = normalizeRuleState(parsed);
+      if (parsed?.assetMaidExampleSeeded !== true) {
+        await saveRuleState(memoryRuleState);
+      }
       return normalizeRuleState(memoryRuleState);
     } catch (error) {
       console.warn(
@@ -699,10 +764,13 @@
     const outputMode = requestedOutputMode === 'dialogue'
       ? 'dialogue'
       : 'bilingual';
+    const paragraphSourcePosition = getString('paragraph_source_position', 'above') === 'below' ? 'below' : 'above';
     const dialogueSourcePosition = getString(
       'dialogue_source_position',
       'outside'
-    ).trim().toLowerCase() === 'inside' ? 'inside' : 'outside';
+    ).trim().toLowerCase();
+    const validDialoguePosition = ['outside', 'inside', 'source-outside', 'source-inside'].includes(dialogueSourcePosition)
+      ? dialogueSourcePosition : 'outside';
     const uppercaseBlockPairing = getInt('uppercase_block_pairing', 1) !== 0;
 
     const sourceMessageRole = getString('source_message_role', 'any')
@@ -719,7 +787,7 @@
       noneAllowed: true,
     });
 
-    const useSourceSpan = !(outputMode === 'dialogue' && dialogueSourcePosition === 'inside') && getInt('use_source_span', 1) !== 0;
+    const useSourceSpan = getInt('use_source_span', 1) !== 0;
 
     const sourceColor = decodeConfigString(
       getString('source_color', '#b6997c'),
@@ -783,7 +851,8 @@
       pluginEnabled,
       enabled,
       outputMode,
-      dialogueSourcePosition,
+      dialogueSourcePosition: validDialoguePosition,
+      paragraphSourcePosition,
       uppercaseBlockPairing,
       sourceMessageRole,
       sourceStartPattern,
@@ -807,6 +876,7 @@
       translationStripPatterns,
       translationRules: ruleState.translationRules,
       uiExcludeRules: ruleState.excludeRules,
+      protectRules: ruleState.protectRules,
       contextRules: ruleState.contextRules,
       debug,
     };
@@ -833,8 +903,8 @@
 
     let flags = '';
     if (
-      (type === 'translation' || type === 'context') &&
-      rule.global !== false
+      type === 'protect' ||
+      ((type === 'translation' || type === 'context') && rule.global !== false)
     ) flags += 'g';
     if (rule.ignoreCase === true) flags += 'i';
     return new RegExp(input, flags);
@@ -933,18 +1003,19 @@
         .bt-fixed-top { position: sticky; top: -20px; z-index: 40; margin: -20px -18px 0; padding: 20px 18px 0; background: var(--bt-bg); }
         .bt-wrap-settings .bt-fixed-top { position: relative; top: auto; flex: 0 0 auto; }
         .bt-settings-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding-top: 2px; }
-        .bt-head { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
+        .bt-head { position: relative; display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
         .bt-title { padding-right: 10px; margin: 0; font-size: 1.5rem; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bt-description.bt-unsaved-notice { grid-column: 1 / -1; text-align: right; margin: 0; color: #d66f6f; }
+        .bt-description.bt-unsaved-notice { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+        .bt-head[data-unsaved="true"]::after { content: attr(data-unsaved-text); position: absolute; top: 100%; left: 0; right: 0; color: #d66f6f; font-size: 0.78rem; font-weight: 400; line-height: 1.2; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
         .bt-unsaved-notice[hidden] { display: none; }
-        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 10px; }
+        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 6px; }
         .bt-icon:active, .bt-tab:active, .bt-add:active, .bt-save:active { background: color-mix(in srgb, var(--bt-text) 10%, transparent); }
         .bt-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--bt-border); margin-bottom: 6px; background: var(--bt-bg); }
         .bt-tab-cell { position: relative; display: flex; align-items: stretch; justify-content: center; border-bottom: 2px solid transparent; }
         .bt-tab-cell[data-selected="true"] { border-bottom-color: var(--bt-selected); }
         .bt-tab { min-width: 0; border: 0; padding: 12px 4px 10px 8px; background: transparent; color: var(--bt-muted); font-size: 1.1rem; cursor: pointer; }
         .bt-tab[aria-selected="true"] { color: var(--bt-text); border-bottom-color: var(--bt-selected); font-weight: 700; }
-        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 50%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
+        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 30%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
         .bt-help[aria-expanded="true"] { border-color: var(--bt-text); color: var(--bt-text); }
         .bt-tooltip { position: absolute; z-index: 5; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: min(340px, calc(100vw - 56px)); padding: 11px 12px; border: 1px solid var(--bt-border); border-radius: 10px; background: var(--bt-button); color: var(--bt-text); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32); font-size: 0.92rem; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; }
         .bt-tab-cell:last-child .bt-tooltip { right: 8px; left: auto; transform: none; }
@@ -954,7 +1025,7 @@
         .bt-regex-heading-title { margin: 0; font-size: 1.1rem; font-weight: 800; line-height: 1.3; }
         .bt-regex-heading .bt-help { margin-left: 0; margin-right: 0; }
         .bt-regex-heading .bt-tooltip { top: calc(100% - 2px); left: 0; transform: none; }
-        .bt-list { border: 1px solid var(--bt-border); border-radius: 14px; overflow: hidden; background: var(--bt-panel); }
+        .bt-list { border: 1px solid var(--bt-border); border-radius: 8.4px; overflow: hidden; background: var(--bt-panel); }
         .bt-rule { border-bottom: 1px solid var(--bt-border); }
         .bt-rule:last-child { border-bottom: 0; }
         .bt-row { display: grid; grid-template-columns: 1fr 50px; align-items: stretch; min-height: 58px; }
@@ -964,9 +1035,12 @@
         .bt-inline-editor { padding: 20px 18px 4px; background: color-mix(in srgb, var(--bt-panel) 88%, var(--bt-bg)); }
         .bt-inline-editor .bt-area { min-height: 96px; }
         .bt-empty { padding: 30px 18px; color: var(--bt-muted); font-size: 1.1rem; text-align: center; }
-        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
+        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
+        .bt-field.bt-name-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+        .bt-name-field > .bt-label { margin-bottom: 0; padding-right: 8px; }
+        .bt-name-field > .bt-input { min-width: 0; }
         .bt-label { display: block; margin-bottom: 8px; font-size: 1.05rem; font-weight: 700; }
         .bt-label-with-icon { display: inline-flex; align-items: center; gap: 8px; }
         .bt-label-icon { display: inline-flex; width: 18px; height: 18px; flex: 0 0 18px; }
@@ -987,11 +1061,34 @@
         .bt-mode-head { position: relative; z-index: 20; margin-bottom: 18px; }
         .bt-title-button { width: 100%; min-width: 0; border: 0; padding: 4px 2px; background: transparent; color: var(--bt-text); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .bt-mode-arrow { color: var(--bt-text); font-size: 10px; }
-        .bt-mode-option { position: absolute; z-index: 1; top: calc(100% + 4px); right: 48px; left: 48px; display: block; width: auto; margin: 0; border: 1px solid var(--bt-border); border-radius: 10px; padding: 11px 2px; background: var(--bt-bg); color: var(--bt-text); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; white-space: nowrap; cursor: pointer; }
+        .bt-mode-option { position: absolute; z-index: 1; top: calc(100% + 4px); right: 48px; left: 48px; display: block; width: auto; margin: 0; border: 1px solid var(--bt-border); border-radius: 6px; padding: 11px 2px; background: var(--bt-bg); color: var(--bt-text); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; white-space: nowrap; cursor: pointer; }
         .bt-mode-option:hover, .bt-mode-option:active { background: var(--bt-button); }
         .bt-mode-option[hidden] { display: none !important; }
         .bt-settings [hidden] { display: none !important; }
         select.bt-input, select.bt-input option { color: var(--bt-text); background: var(--bt-panel); }
+        .bt-select-trigger { text-align: left; cursor: pointer; border-radius: 4.8px; }
+        .bt-select-trigger::after { content: '▾'; float: right; margin-left: 8px; color: var(--bt-muted); }
+        .bt-option-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.48); }
+        .bt-option-popup { width: min(100%, 420px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid var(--bt-border); border-radius: 16px; background: var(--bt-panel); color: var(--bt-text); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3); }
+        .bt-option-choice { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
+        .bt-option-choice[aria-checked="true"] { background: var(--bt-button); box-shadow: inset 3px 0 var(--bt-selected); }
+        .bt-option-choice:hover, .bt-option-choice:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
+        .bt-option-choice:first-child { border-top: 0; }
+        .bt-option-label { min-width: 0; flex: 1; }
+        .bt-option-radio { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-left: auto; align-items: center; justify-content: center; border: 2px solid var(--bt-muted); border-radius: 50%; }
+        .bt-option-radio::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: 0; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
+        .bt-option-source { position: relative; isolation: isolate; color: inherit; white-space: nowrap; }
+        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(255, 235, 59, 0.3)); border-radius: 1px; pointer-events: none; }
+        .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
+        #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
+        .bt-save { position: relative; }
+        .bt-button-label { display: block; }
+        .bt-save[data-notice="true"] > .bt-button-label { visibility: hidden; }
+        .bt-save[data-notice="true"]::after { content: attr(data-notice-text); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 4px 10px; color: var(--bt-text); font-size: 0.86rem; font-weight: 400; line-height: 1.3; white-space: normal; text-align: center; pointer-events: none; }
+        .bt-live-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+        .bt-settings-footer > .bt-status:empty { display: none; }
         .bt-settings { padding-top: 2px; }
         .bt-setting-divider { min-height: 40px; padding: 8px 0; position: sticky; top: var(--bt-sticky-offset); z-index: 20; display: flex; align-items: center; gap: 12px; margin: 20px 0 17px; color: var(--bt-muted); font-size: 0.9rem; text-align: center; background: var(--bt-bg); }
         .bt-setting-divider::before, .bt-setting-divider::after { content: ''; flex: 1; height: 1px; background: var(--bt-border); }
@@ -1002,13 +1099,13 @@
         .bt-toggle-field.is-off .bt-label { color: var(--bt-muted); }
         .bt-badge-toggle { position: relative; cursor: pointer; }
         .bt-badge-toggle input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
+        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 3.6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
         .is-off .bt-toggle-badge { border-color: color-mix(in srgb, var(--bt-selected) 20%, transparent); background: transparent; color: var(--bt-muted); }
         .bt-badge-toggle input:focus-visible + .bt-toggle-badge { outline: 2px solid var(--bt-selected); outline-offset: 3px; }
         .bt-number-stepper { position: relative; }
         .bt-number-stepper .bt-input { padding-right: 80px; appearance: textfield; -moz-appearance: textfield; }
         .bt-number-stepper input::-webkit-inner-spin-button, .bt-number-stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 7px 7px 0; }
+        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 4.2px 4.2px 0; }
         .bt-stepper-buttons button { border: 0; background: var(--bt-button); cursor: pointer; font-size: 0.65rem; padding: 0; }
         .bt-stepper-buttons button + button { border-left: 1px solid var(--bt-border); }
         .bt-stepper-buttons button:disabled { opacity: 0.35; cursor: default; }
@@ -1016,11 +1113,13 @@
         .bt-description { display: block; margin: -3px 0 8px; color: var(--bt-muted); font-size: 0.86rem; line-height: 1.45; }
         .bt-settings .bt-field { margin-bottom: 26px; }
         .bt-settings .bt-input { min-height: 44px; }
-        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 12px; background: var(--bt-panel); }
+        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; background: var(--bt-panel); }
         .bt-toggle-field .bt-label { margin-bottom: 3px; }
         .bt-toggle-field .bt-description { grid-column: 1; margin: 0; }
         .bt-toggle-field input { grid-column: 2; grid-row: 1 / span 2; width: 21px; height: 21px; accent-color: var(--bt-selected); }
-        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 10px 0 26px; }
+        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; margin: 10px 0 26px; }
+        .bt-operation-status { grid-column: 1 / -1; margin: 0; }
+        .bt-operation-status:empty { display: none; }
         .bt-top-toggle { min-width: 0; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; padding: 12px; }
         .bt-top-toggle .bt-label { min-width: 0; margin: 0; font-size: 0.92rem; line-height: 1.32; overflow-wrap: anywhere; }
         .bt-top-toggle .bt-label-with-icon { align-items: flex-start; gap: 6px; }
@@ -1038,14 +1137,14 @@
         .bt-flags { display: flex; align-items: center; gap: 16px; margin-top: 9px; color: var(--bt-muted); font-size: 0.86rem; }
         .bt-flag { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
         .bt-flag input { width: 17px; height: 17px; accent-color: var(--bt-selected); }
-        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 999px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 10px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
         .bt-glossary-chip[data-enabled="true"] { border-color: var(--bt-selected); background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); }
         .bt-glossary-chip:active { transform: translateY(1px); }
         .bt-error { min-height: 1.4em; margin: -5px 0 10px; color: #d66f6f; font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status { text-align: center; min-height: 1.4em; margin: 0 0 8px; color: var(--bt-muted); font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status[data-error="true"] { color: #d66f6f; }
-        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 10px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
-        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 12px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
+        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 16px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
+        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
         .bt-wrap, .bt-settings-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-border) 72%, transparent) transparent; }
         .bt-wrap::-webkit-scrollbar, .bt-settings-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
         .bt-wrap::-webkit-scrollbar-track, .bt-settings-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -1070,6 +1169,9 @@
           .bt-tab { padding-inline: 3px; font-size: 0.88rem; }
           .bt-tooltip { font-size: 0.84rem; }
           .bt-regex-heading-title { font-size: 1rem; }
+          .bt-regex-heading { min-height: 36px; padding-block: 6px; }
+          .bt-regex-section .bt-row { min-height: 48px; }
+          .bt-regex-section .bt-open { padding-block: 10px; }
           .bt-open, .bt-empty, .bt-add, .bt-save, .bt-readonly-hint { font-size: 1rem; }
           .bt-regex-section .bt-add { font-size: 1rem; }
           .bt-inline-editor .bt-label { font-size: 0.95rem; }
@@ -1082,7 +1184,7 @@
           .bt-error, .bt-status { font-size: 0.9rem; }
           .bt-help { margin-right: 3px; }
           .bt-inline-editor { padding: 17px 13px 2px; }
-          .bt-top-toggle-grid { gap: 6px; margin-top: 6px;}
+          .bt-top-toggle-grid { width: 100%; gap: 6px; margin-top: 6px; }
           .bt-top-toggle { padding: 10px 8px; column-gap: 5px; }
           .bt-top-toggle .bt-label { font-size: 0.74rem; }
           .bt-top-toggle .bt-label-with-icon { gap: 4px; }
@@ -1131,6 +1233,8 @@
     notice.textContent = '저장하지 않은 설정값이 있습니다.';
     notice.setAttribute('role', 'status');
     notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    head.dataset.unsaved = String(!notice.hidden);
+    head.dataset.unsavedText = notice.textContent;
     head.append(left, heading, close, notice);
     return { head, left };
   }
@@ -1308,18 +1412,18 @@
     notice.textContent = '저장하지 않은 설정값이 있습니다.';
     notice.setAttribute('role', 'status');
     notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    head.dataset.unsaved = String(!notice.hidden);
+    head.dataset.unsavedText = notice.textContent;
     head.append(left, heading, close, notice);
     wrapper.append(head, alternative);
     return { wrapper, closeMenu: () => setOpened(false) };
   }
 
-  function renderSettingsPanel() {
+  function createOperationControls() {
     if (!settingsDraft) resetSettingsDraft();
-    const app = document.getElementById('bt-app');
-    const settings = document.createElement('section');
-    settings.className = 'bt-settings';
     const inputs = new Map();
-
+    const status = document.createElement('div');
+    status.className = 'bt-status bt-operation-status';
     const topToggleGrid = document.createElement('div');
     topToggleGrid.className = 'bt-top-toggle-grid';
     const topToggleFields = new Map();
@@ -1410,7 +1514,19 @@
     pluginToggle?.addEventListener('change', syncPluginDependentToggles);
     syncPluginDependentToggles();
 
-    settings.appendChild(topToggleGrid);
+    topToggleGrid.appendChild(status);
+    return topToggleGrid;
+  }
+
+  function renderSettingsPanel() {
+    if (!settingsDraft) resetSettingsDraft();
+    const app = document.getElementById('bt-app');
+    const settings = document.createElement('section');
+    settings.className = 'bt-settings';
+    const inputs = new Map();
+    settings.appendChild(createOperationControls());
+
+
 
     const items = [
       ...(getUiMode() === 'dialogue' ? [
@@ -1421,15 +1537,42 @@
         label: '대사 원문 삽입 위치',
         description: '',
         options: [
-          ['outside', '따옴표 밖: “번역문”(원문)'],
-          ['inside', '따옴표 안: “번역문 (원문)”'],
+          ['outside', '“번역문” (원문)'],
+          ['inside', '“번역문 (원문)”'],
+          ['source-outside', '“원문” (번역문)'],
+          ['source-inside', '“원문 (번역문)”'],
         ],
       },
       {
         key: 'uppercase_block_pairing',
         type: 'checkbox',
-        label: '독립 대문자 블록 병기',
-        description: '문단 구조가 안전하게 대응될 때 대문자 원문 블록을 번역문 뒤에 붙입니다.',
+        label: '대문자 병기',
+        description: '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: 캐릭터 (CHARACTER)',
+      },
+      ] : []),
+      ...(getUiMode() === 'bilingual' ? [
+      { divider: '원문-번역문 사이 설정' },
+      {
+        key: 'paragraph_source_position',
+        type: 'select',
+        label: '원문 문단 삽입 위치',
+        description: '',
+        options: [
+          ['above', '위: 원문→번역문'],
+          ['below', '아래: 번역문→원문'],
+        ],
+      },
+      {
+        key: 'source_translation_separator',
+        label: '원문-번역문 사이 구분자',
+        description: 'NONE=없음 (기본: \\n)',
+        placeholder: '\\n',
+      },
+      {
+        key: 'pair_separator',
+        label: '원문+번역문 문단 사이 구분자',
+        description: 'NONE=없음 (기본: \\n\\n)',
+        placeholder: '\\n\\n',
       },
       ] : []),
       { divider: '번역 원문 찾기' },
@@ -1480,21 +1623,7 @@
         description: '원문 <span>에 class 명을 추가합니다. (기본: 없음)',
         placeholder: '(비우면 생략)',
       },
-      ...(getUiMode() === 'bilingual' ? [
-      { divider: '원문-번역문 사이 설정' },
-      {
-        key: 'source_translation_separator',
-        label: '원문-번역문 사이 구분자',
-        description: 'NONE=없음 (기본: \\n)',
-        placeholder: '\\n',
-      },
-      {
-        key: 'pair_separator',
-        label: '원문+번역문 문단 사이 구분자',
-        description: 'NONE=없음 (기본: \\n\\n)',
-        placeholder: '\\n\\n',
-      },
-      ] : []),
+
       { divider: '이전 메시지 제공' },
       {
         key: 'translation_context_messages',
@@ -1547,7 +1676,7 @@
         key: 'retry_guard_enabled',
         type: 'checkbox',
         label: '재시도 중복 방지',
-        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다. (기본: OFF)',
+        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다.',
       },
       {
         key: 'keep_reasoning_blocks',
@@ -1642,15 +1771,7 @@
         input.addEventListener('change', syncOffStyle);
         syncOffStyle();
       } else if (item.type === 'select') {
-        input = document.createElement('select');
-        input.className = 'bt-input';
-        for (const [value, text] of item.options ?? []) {
-          const option = document.createElement('option');
-          option.value = value;
-          option.textContent = text;
-          input.appendChild(option);
-        }
-        input.value = settingsDraft.config[item.key] ?? item.options?.[0]?.[0] ?? '';
+        input = createPopupSelect(item, settingsDraft.config[item.key] ?? item.options?.[0]?.[0] ?? '');
       } else if (item.type === 'textarea') {
         input = document.createElement('textarea');
         input.className = item.tall ? 'bt-area bt-context-template' : 'bt-area';
@@ -1706,8 +1827,11 @@
     }
 
     const syncConditionalSettings = () => {
-      const inside = getUiMode() === 'dialogue' && inputs.get('dialogue_source_position')?.value === 'inside';
-      settings.querySelectorAll('[data-setting-group="span"]').forEach(element => { element.hidden = inside; });
+      const position = inputs.get('dialogue_source_position')?.value ?? 'outside';
+      const uppercaseDescription = inputs.get('uppercase_block_pairing')?.closest('.bt-field')?.querySelector('.bt-description');
+      if (uppercaseDescription) uppercaseDescription.textContent =
+        '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: ' +
+        (position.startsWith('source-') ? 'CHARACTER (캐릭터)' : '캐릭터 (CHARACTER)');
     };
     inputs.get('dialogue_source_position')?.addEventListener('change', syncConditionalSettings);
     syncConditionalSettings();
@@ -1750,8 +1874,13 @@
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'bt-save';
-    save.textContent = '설정 저장';
+    save.id = 'bt-save-settings';
+    setButtonLabel(save, '설정 저장');
+    setButtonNotice(save);
+    let saveNoticeTimer = null;
     save.addEventListener('click', async () => {
+      if (saveNoticeTimer) clearTimeout(saveNoticeTimer);
+      setButtonNotice(save);
       status.textContent = '';
       status.dataset.error = 'false';
       captureDraft();
@@ -1769,7 +1898,11 @@
         await persistGlossaryStateNow(memoryGlossaryState);
         settingsSavedSnapshot = settingsSnapshot(savingDraft);
         syncUnsavedNotice();
-        status.textContent = '저장되었습니다.';
+        setButtonNotice(save, '저장되었습니다.');
+        saveNoticeTimer = setTimeout(() => {
+          saveNoticeTimer = null;
+          setButtonNotice(save);
+        }, 1000);
       } catch (error) {
         status.dataset.error = 'true';
         status.textContent = `저장하지 못했습니다: ${error?.message ?? error}`;
@@ -1783,20 +1916,137 @@
     const clearSources = document.createElement('button');
     clearSources.type = 'button';
     clearSources.className = 'bt-save';
-    clearSources.textContent = '수집한 원문 비우기';
+    clearSources.id = 'bt-clear-sources';
     clearSources.style.marginBottom = '8px';
     clearSources.title = '번역이 끝나거나 중단된 뒤 사용하세요. 병기 대기 중인 원문을 모두 비웁니다.';
     clearSources.addEventListener('click', () => {
-      const count = clearPendingSources();
-      status.dataset.error = 'false';
-      status.textContent = `수집한 원문 ${count}건을 비웠습니다.`;
+      if (pendingSources.length === 0) return;
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      if (!pendingSourceClearSnapshot) {
+        pendingSourceClearSnapshot = pendingSources.slice();
+        pendingSourceNotice = `한 번 더 누르면 수집한 원문 (${pendingSources.length}개)를 비웁니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceClearSnapshot = null;
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 4000);
+      } else {
+        pendingSourceClearSnapshot = null;
+        const count = clearPendingSources();
+        pendingSourceNotice = `수집한 원문 ${count}개를 비웠습니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 1000);
+      }
+      syncPendingSourcesButton();
     });
-    footer.append(status, clearSources, save);
+    const announcement = document.createElement('span');
+    announcement.id = 'bt-button-announcement';
+    announcement.className = 'bt-live-status';
+    announcement.setAttribute('role', 'status');
+    announcement.setAttribute('aria-live', 'polite');
+    footer.append(status, clearSources, save, announcement);
 
     const scroll = document.createElement('div');
     scroll.className = 'bt-settings-scroll';
     scroll.appendChild(settings);
     app.append(scroll, footer);
+    syncPendingSourcesButton();
+  }
+
+  function createPopupSelect(item, initialValue) {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'bt-input bt-select-trigger';
+    trigger.value = initialValue;
+    trigger.setAttribute('aria-label', item.label);
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    const options = item.options ?? [];
+    const renderChoice = (button, text) => {
+      const label = document.createElement('span');
+      label.className = 'bt-option-label';
+      button.replaceChildren(label);
+      for (const part of text.split(/(\(원문\)|번역문|원문)/g)) {
+        const span = document.createElement('span');
+        span.textContent = part;
+        if (part === '원문' || part === '(원문)') span.className = 'bt-option-source';
+        if (part === '번역문') span.className = 'bt-option-translation';
+        label.appendChild(span);
+      }
+    };
+    const syncLabel = () => renderChoice(trigger, (options.find(option => option[0] === trigger.value) ?? options[0] ?? ['', ''])[1]);
+    trigger.addEventListener('click', event => {
+      event.preventDefault();
+      if (trigger.getAttribute('aria-expanded') === 'true') return;
+      const overlay = document.createElement('div');
+      overlay.className = 'bt-option-overlay';
+      const popup = document.createElement('div');
+      popup.className = 'bt-option-popup';
+      popup.setAttribute('role', 'dialog');
+      popup.setAttribute('aria-modal', 'true');
+      popup.setAttribute('aria-label', item.label);
+      const list = document.createElement('div');
+      list.className = 'bt-option-list';
+      list.setAttribute('role', 'radiogroup');
+      list.setAttribute('aria-label', item.label);
+      const buttons = [];
+      const close = () => {
+        overlay.remove();
+        trigger.setAttribute('aria-expanded', 'false');
+        if (trigger.isConnected) trigger.focus();
+      };
+      for (const [value, text] of options) {
+        const choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = 'bt-option-choice';
+        choice.setAttribute('role', 'radio');
+        choice.setAttribute('aria-checked', String(value === trigger.value));
+        renderChoice(choice, text);
+        const indicator = document.createElement('span');
+        indicator.className = 'bt-option-radio';
+        indicator.setAttribute('aria-hidden', 'true');
+        choice.appendChild(indicator);
+        choice.addEventListener('click', () => {
+          trigger.value = value;
+          syncLabel();
+          trigger.dispatchEvent(new Event('input', { bubbles: true }));
+          trigger.dispatchEvent(new Event('change', { bubbles: true }));
+          close();
+        });
+        buttons.push(choice);
+        list.appendChild(choice);
+      }
+      popup.appendChild(list);
+      overlay.appendChild(popup);
+      overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const index = buttons.indexOf(document.activeElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+          buttons[next]?.focus();
+        } else if (event.key === 'Tab') {
+          const controls = buttons;
+          const index = controls.indexOf(document.activeElement);
+          event.preventDefault();
+          controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
+        }
+      });
+      trigger.setAttribute('aria-expanded', 'true');
+      document.getElementById('bt-app').appendChild(overlay);
+      (buttons[options.findIndex(option => option[0] === trigger.value)] ?? buttons[0])?.focus();
+    });
+    syncLabel();
+    return trigger;
   }
 
   function createEmptyUiRule(activeTab) {
@@ -1823,7 +2073,7 @@
     editor.dataset.ruleId = rule.id;
 
     const nameLabel = document.createElement('label');
-    nameLabel.className = 'bt-field';
+    nameLabel.className = 'bt-field bt-name-field';
     nameLabel.innerHTML = '<span class="bt-label">이름</span>';
     const nameInput = document.createElement('input');
     nameInput.className = 'bt-input';
@@ -1845,7 +2095,7 @@
     let globalInput = null;
     let ignoreCaseInput = null;
 
-    if (activeTab === 'exclude') {
+    if (activeTab === 'exclude' || activeTab === 'protect') {
       const flags = document.createElement('div');
       flags.className = 'bt-flags';
       const iLabel = document.createElement('label');
@@ -1890,7 +2140,7 @@
       flags.append(gLabel, iLabel);
       outputLabel.appendChild(flags);
       editor.appendChild(outputLabel);
-    } else {
+    } else if (activeTab === 'exclude') {
       const outputHint = document.createElement('div');
       outputHint.className = 'bt-field';
       outputHint.innerHTML = '<span class="bt-label">OUT:</span>';
@@ -1994,6 +2244,13 @@
   }
 
   function getRuleSectionMeta(type) {
+    if (type === 'protect') {
+      return {
+        key: 'protectRules',
+        label: '원문만 출력',
+        description: '에셋 출력식, 플러그인 용 특수 패턴 등 번역이 필요하지 않은 문단',
+      };
+    }
     if (type === 'translation') {
       return {
         key: 'translationRules',
@@ -2035,7 +2292,7 @@
     title.className = 'bt-regex-heading-title';
     title.textContent = meta.label;
     heading.appendChild(title);
-    heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
+    if (meta.tooltip) heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
     section.appendChild(heading);
     if (meta.description) {
       const description = document.createElement('span');
@@ -2214,7 +2471,7 @@
           catch (error) { errorBox.textContent = `정규식 오류 (번역 시 건너뜀): ${error?.message ?? error}`; }
         };
         const nameLabel = document.createElement('label');
-        nameLabel.className = 'bt-field';
+        nameLabel.className = 'bt-field bt-name-field';
         nameLabel.innerHTML = '<span class="bt-label">이름</span>';
         const nameInput = document.createElement('input');
         nameInput.className = 'bt-input';
@@ -2365,6 +2622,7 @@
       regexPage.className = 'bt-regex-page';
       regexPage.append(
         ...(getUiMode() === 'bilingual' ? [renderSingleRuleSection(state, 'exclude')] : []),
+        renderSingleRuleSection(state, 'protect'),
         renderSingleRuleSection(state, 'translation'),
         renderSingleRuleSection(state, 'context')
       );
@@ -2511,6 +2769,105 @@
       rawSourceStartPreview: '',
     };
   }
+
+  function createAssetMaidExampleRule() {
+    return {
+      id: makeRuleId(),
+      name: '에셋 메이드',
+      input: '<div class="am-illustration-projection"[\\s\\S]*?<\\/div>',
+      ignoreCase: false,
+    };
+  }
+
+
+  function protectSourceMatches(messages, extracted, config) {
+    const { source, sourceStart, sourceEnd, messageIndex } = extracted;
+    const ranges = [];
+    for (const rule of config.protectRules) {
+      if (!rule.input) continue;
+      try {
+        for (const match of source.matchAll(compileUiRegex(rule, 'protect'))) {
+          if (match[0]) ranges.push({ start: match.index, end: match.index + match[0].length });
+        }
+      } catch (error) {
+        warn(config, `invalid source protection regex "${getRuleLabel(rule)}": ${error?.message ?? error}`);
+      }
+    }
+    if (!ranges.length) return null;
+
+    // Merge overlaps so each character is masked and restored only once.
+    ranges.sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const range of ranges) {
+      const previous = merged[merged.length - 1];
+      if (previous && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
+      else merged.push(range);
+    }
+
+    const usedTokens = new Set(messages.flatMap(message =>
+      getMessageContent(message).match(/\[\[P\d+\]\]/g) ?? []
+    ));
+    const originals = new Map();
+    let nextId = 1;
+    for (const range of merged) {
+      let token;
+      do {
+        token = `[[P${nextId++}]]`;
+      } while (usedTokens.has(token));
+      range.token = token;
+      originals.set(token, source.slice(range.start, range.end));
+    }
+
+    const message = messages[messageIndex];
+    const content = getMessageContent(message);
+    const rawSource = content.slice(sourceStart, sourceEnd);
+    const offset = sourceStart + rawSource.length - rawSource.trimStart().length;
+    let maskedSource = '';
+    let cursor = 0;
+    for (const { start, end, token } of merged) {
+      maskedSource += source.slice(cursor, start) + token;
+      cursor = end;
+    }
+    maskedSource += source.slice(cursor);
+
+    let partOffset = 0;
+    let rangeIndex = 0;
+    const maskPart = (part) => {
+      const partStart = partOffset;
+      partOffset += part.length;
+      let result = '';
+      let cursor = 0;
+      while (rangeIndex < merged.length) {
+        const { start, end, token } = merged[rangeIndex];
+        const localStart = offset + start - partStart;
+        const localEnd = offset + end - partStart;
+        if (localStart >= part.length) break;
+        if (localStart >= 0) result += part.slice(cursor, localStart) + token;
+        cursor = localEnd;
+        if (localEnd > part.length) break;
+        rangeIndex++;
+      }
+      return result + part.slice(cursor);
+    };
+
+    const nextContent = Array.isArray(message.content)
+      ? message.content.map(part => {
+          if (typeof part === 'string') return maskPart(part);
+          if (typeof part?.text === 'string') return { ...part, text: maskPart(part.text) };
+          return part;
+        })
+      : maskPart(content);
+    const nextMessages = messages.slice();
+    nextMessages[messageIndex] = { ...message, content: nextContent };
+    return { messages: nextMessages, source: maskedSource, originals };
+  }
+
+
+  function restoreSourceMatches(text, originals) {
+    if (!originals?.size || typeof text !== 'string') return text;
+    return text.replace(/\[\[P\d+\]\]/g, token => originals.get(token) ?? token);
+  }
+
 
   /* ---------------- Recent chat context ---------------- */
 
@@ -3113,8 +3470,10 @@
       const translatedItem = parseListLine(translatedLines[i], translatedBlock.type);
       if (!sourceItem || !translatedItem) return null;
 
-      output.push(`${sourceItem.prefix}${formatSource(sourceItem.content, config)}`);
-      output.push(`${translatedItem.prefix}${translatedItem.content}`);
+      const original = `${sourceItem.prefix}${formatSource(sourceItem.content, config)}`;
+      const translation = `${translatedItem.prefix}${translatedItem.content}`;
+      output.push(...(config.paragraphSourcePosition === 'below'
+        ? [translation, original] : [original, translation]));
     }
 
     return output.join('\n');
@@ -3198,105 +3557,54 @@
     }
   }
 
-  function renderMarkdownPair(sourceBlock, translatedBlock, config, index) {
+  function joinParagraphPair(original, translation, separator, config) {
+    return config.paragraphSourcePosition === 'below'
+      ? translation + separator + original
+      : original + separator + translation;
+  }
+
+  function renderMarkdownPair(sourceBlock, translatedBlock, config, index, originals) {
     const sourceText = sourceBlock?.text ?? '';
-    const translatedText = translatedBlock?.text ?? '';
-
-    if (sourceText && shouldExcludeSource(sourceText, config)) {
-      log(config, `source block ${index + 1} excluded by pattern`);
+    const maskedText = translatedBlock?.text ?? '';
+    const excluded = sourceText && shouldExcludeSource(sourceText, config);
+    if (excluded) log(config, `source block ${index + 1} excluded by pattern`);
+    if (!sourceText || excluded) {
       return {
-        text: translatedText,
+        text: restoreSourceMatches(maskedText, originals),
         markdown: translatedBlock?.type !== 'normal',
       };
     }
-
-    if (!sourceText) {
-      return {
-        text: translatedText,
-        markdown: translatedBlock?.type !== 'normal',
-      };
-    }
-
+    const unmaskedText = originals?.size
+      ? maskedText.replace(/\[\[P\d+\]\]/g, token => originals.has(token) ? '' : token)
+      : maskedText;
+    const translatedText = unmaskedText === maskedText ? maskedText : unmaskedText.trim();
     if (!translatedText) {
-      return {
-        text: renderSourceOnly(sourceBlock, config),
-        markdown: sourceBlock.type !== 'normal',
-      };
+      return { text: renderSourceOnly(sourceBlock, config), markdown: sourceBlock.type !== 'normal' };
     }
-
-    if (sourceBlock.type !== translatedBlock.type) {
-      return {
-        text: `${sourceText}${makeMarkdownSeparator(
-          config.sourceTranslationSeparator,
-          true
-        )}${translatedText}`,
-        markdown: true,
-      };
-    }
-
+    const markdownPair = (original, blankLine = true) => ({
+      text: joinParagraphPair(original, translatedText,
+        makeMarkdownSeparator(config.sourceTranslationSeparator, blankLine), config),
+      markdown: true,
+    });
+    if (sourceBlock.type !== translatedBlock.type) return markdownPair(sourceText);
     switch (sourceBlock.type) {
       case 'unordered-list':
       case 'ordered-list': {
-        const rendered = renderInterleavedList(
-          sourceBlock,
-          translatedBlock,
-          config
-        );
-        return rendered
-          ? { text: rendered, markdown: true }
-          : {
-              text: `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-              markdown: true,
-            };
+        const rendered = renderInterleavedList(sourceBlock, { ...translatedBlock, text: translatedText }, config);
+        return rendered ? { text: rendered, markdown: true } : markdownPair(sourceText);
       }
-
       case 'heading':
-        return {
-          text: `${renderHeadingSource(
-            sourceBlock,
-            config
-          )}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            false
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(renderHeadingSource(sourceBlock, config), false);
       case 'quote':
       case 'code':
-        return {
-          text: `${sourceText}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            true
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(sourceText);
       case 'table':
-        return {
-          text: tablesAreCompatible(sourceBlock, translatedBlock)
-            ? `${renderTableSource(
-                sourceBlock,
-                config
-              )}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`
-            : `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(tablesAreCompatible(sourceBlock, translatedBlock)
+          ? renderTableSource(sourceBlock, config) : sourceText);
       default:
         return {
-          text: `${formatSource(sourceText, config)}${
-            config.sourceTranslationSeparator
-          }${translatedText}`,
+          text: joinParagraphPair(formatSource(sourceText, config), translatedText,
+            config.sourceTranslationSeparator, config),
           markdown: false,
         };
     }
@@ -3418,7 +3726,7 @@
 
     for (let i = 0; i < maxLength; i++) {
       renderedBlocks.push(
-        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i)
+        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i, meta.originals)
       );
     }
 
@@ -3573,9 +3881,11 @@
       if (sourceText === translatedText) continue;
 
       edits.push({
-        start: translatedBlocks[i].end,
+        start: config.dialogueSourcePosition.startsWith('source-') ? translatedBlocks[i].start : translatedBlocks[i].end,
         end: translatedBlocks[i].end,
-        replacement: ` ${formatSourceParenthetical(sourceText, config)}`,
+        replacement: config.dialogueSourcePosition.startsWith('source-')
+          ? `${sourceText} ${formatSourceParenthetical(translatedText, config)}`
+          : ` ${formatSourceParenthetical(sourceText, config)}`,
         kind: 'uppercase',
       });
     }
@@ -3631,25 +3941,39 @@
     for (let i = 0; i < pairCount; i++) {
       const sourceDialogue = sourceDialogues[i];
       const translatedDialogue = translatedDialogues[i];
-      const original = formatSourceParenthetical(
-        sourceDialogue.content,
-        config,
-        config.dialogueSourcePosition === 'outside'
-      );
-      if (config.dialogueSourcePosition === 'inside') {
+      const position = config.dialogueSourcePosition;
+      const inside = position.endsWith('inside');
+      if (inside && config.useSourceSpan) {
+        const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
+        const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
+        const sourceFirst = position.startsWith('source-');
+        const dialogue = sourceFirst ? sourceDialogue.content : translatedDialogue.content;
+        const paired = sourceFirst ? translatedDialogue.content : sourceDialogue.content;
         edits.push({
-          start: translatedDialogue.contentEnd,
-          end: translatedDialogue.contentEnd,
-          replacement: ` ${original}`,
+          start: translatedDialogue.start,
+          end: translatedDialogue.end,
+          replacement: `<span>${opening}${dialogue} ${formatSourceParenthetical(paired, config)}${closing}</span>`,
+          kind: 'dialogue',
+        });
+        continue;
+      }
+      if (position.startsWith('source-')) {
+        const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
+        const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
+        const original = sourceDialogue.content;
+        const parenthetical = formatSourceParenthetical(translatedDialogue.content, config);
+        edits.push({
+          start: translatedDialogue.start,
+          end: translatedDialogue.end,
+          replacement: inside
+            ? `${opening}${original} ${parenthetical}${closing}`
+            : `${opening}${original}${closing} ${parenthetical}`,
           kind: 'dialogue',
         });
       } else {
-        edits.push({
-          start: translatedDialogue.end,
-          end: translatedDialogue.end,
-          replacement: original,
-          kind: 'dialogue',
-        });
+        const original = formatSourceParenthetical(sourceDialogue.content, config);
+        const index = inside ? translatedDialogue.contentEnd : translatedDialogue.end;
+        edits.push({ start: index, end: index, replacement: ' ' + original, kind: 'dialogue' });
       }
     }
 
@@ -3659,7 +3983,7 @@
       config
     );
     edits.push(...uppercase.edits);
-    const result = applyTextEdits(cleanedTranslated, edits);
+    const result = restoreSourceMatches(applyTextEdits(cleanedTranslated, edits), meta.originals);
 
     if (config.debug) {
       const details = [
@@ -3694,14 +4018,16 @@
     }
     if (!config.pluginEnabled) {
       pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     if (glossarySaveTimer) await persistGlossaryStateNow(memoryGlossaryState);
     await glossarySaveChain;
     const glossary = await loadGlossaryState();
     if (generation !== pendingSourceGeneration) return messages;
-    if (!config.enabled && !config.translationContextEnabled && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
+    if (!config.enabled && !config.translationContextEnabled && !config.protectRules.some(rule => rule.input) && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
       pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     const extracted = extractSource(messages, config);
@@ -3715,14 +4041,26 @@
 
     log(config, `captured source (${source.length} chars)`);
 
-    const glossaryBlock = source ? collectGlossaryGuidance(source, glossary, config) : '';
+    const protection = source && protectSourceMatches(messages, extracted, config);
+    let requestMessages = protection?.messages ?? messages;
+    pending.originals = protection?.originals;
+    pending.dialogueSource = protection?.source ?? source;
+
+    const glossaryBlock = source
+      ? collectGlossaryGuidance(protection?.source ?? source, glossary, config)
+      : '';
+    const guidance = [
+      glossaryBlock,
+      protection
+        ? 'Copy each numbered placeholder (such as [[P1]]) into the translation exactly as written, once, at the corresponding position.'
+        : '',
+    ].filter(Boolean).join('\n\n');
     if (!source || !config.translationContextEnabled) {
       return capturePendingSource(
-        appendGlossaryGuidance(messages, glossaryBlock), pending, config
+        appendGlossaryGuidance(requestMessages, guidance), pending, config
       );
     }
 
-    let requestMessages = messages;
     try {
       const contextResult = await resolveRecentContext(extracted, config);
       if (!contextResult) {
@@ -3744,7 +4082,7 @@
             `lookupMs=${contextResult.lookupMs.toFixed(2)}`
         );
         requestMessages = injectRecentContext(
-          messages,
+          requestMessages,
           extracted,
           contextResult
         );
@@ -3757,7 +4095,7 @@
     }
 
     return capturePendingSource(
-      appendGlossaryGuidance(requestMessages, glossaryBlock), pending, config
+      appendGlossaryGuidance(requestMessages, guidance), pending, config
     );
   };
 
@@ -3765,13 +4103,16 @@
     if (type !== 'translate') return content;
 
     const pending = pendingSources.shift();
+    syncPendingSourcesButton();
     const generation = pendingSourceGeneration;
     const config = await getConfig();
     if (pending?.retryGuardMarker || (config.pluginEnabled && config.retryGuardEnabled)) {
       content = stripRetryGuardFromResponse(content);
     }
 
-    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) return content;
+    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) {
+      return restoreSourceMatches(content, pending?.originals);
+    }
 
     if (!pending?.source) {
       warn(config, 'no captured source; returning translation unchanged.');
@@ -3781,7 +4122,7 @@
     try {
       const processor = config.outputMode === 'dialogue' ? makeDialogueOnly : makeBilingual;
       return processor(
-        pending.source,
+        config.outputMode === 'dialogue' ? pending.dialogueSource ?? pending.source : pending.source,
         String(content ?? ''),
         config,
         pending
@@ -3790,7 +4131,7 @@
       console.error(
         `[Versa] post-processing failed: ${error?.message ?? error}`
       );
-      return content;
+      return restoreSourceMatches(content, pending.originals);
     }
   };
 
@@ -3827,7 +4168,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.2 loaded.');
+      log(config, 'Versa v1.4.0 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
