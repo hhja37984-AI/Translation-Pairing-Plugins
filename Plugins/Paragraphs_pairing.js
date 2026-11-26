@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️ 원문-번역문 병기 v1.3.3
+//@display-name ✌️ 원문-번역문 병기 v1.3.4
 //@api 3.0
-//@version 1.3.3
+//@version 1.3.4
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Paragraphs_pairing.js
 
 (() => {
@@ -971,7 +971,7 @@
         .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
-        .bt-field.bt-name-field { display: grid; grid-template-columns: 20% 80%; align-items: center; }
+        .bt-field.bt-name-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
         .bt-name-field > .bt-label { margin-bottom: 0; padding-right: 8px; }
         .bt-name-field > .bt-input { min-width: 0; }
         .bt-label { display: block; margin-bottom: 8px; font-size: 1.05rem; font-weight: 700; }
@@ -3557,7 +3557,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Bilingual v1.3.3 glossary loaded.');
+      log(config, 'Bilingual v1.3.4 glossary loaded.');
     } catch (error) {
       console.error(
         `[Bilingual Translation] initialization failed: ${error?.message ?? error}`
