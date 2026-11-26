@@ -1,8 +1,8 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️ 원문-번역문 병기 v1.3.11
+//@display-name ✌️ 원문-번역문 병기 v1.4.0
 //@api 3.0
-//@version 1.3.11
-//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Paragraphs_pairing.js
+//@version 1.4.0
+//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Paragraphs_pairing.js
 
 (() => {
 
@@ -3762,7 +3762,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Bilingual v1.3.11 glossary loaded.');
+      log(config, 'Bilingual v1.4.0 glossary loaded.');
     } catch (error) {
       console.error(
         `[Bilingual Translation] initialization failed: ${error?.message ?? error}`

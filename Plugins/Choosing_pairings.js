@@ -1,8 +1,8 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.12
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.4.0
 //@api 3.0
-//@version 1.3.12
-//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
+//@version 1.4.0
+//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Choosing_pairings.js
 
 (() => {
 
@@ -4168,7 +4168,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.12 loaded.');
+      log(config, 'Versa v1.4.0 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`

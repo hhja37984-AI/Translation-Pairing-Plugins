@@ -1,8 +1,8 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name 💬 대사 병기 v1.3.12
+//@display-name 💬 대사 병기 v1.4.0
 //@api 3.0
-//@version 1.3.12
-//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Dialogues_pairing.js
+//@version 1.4.0
+//@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/main/Plugins/Dialogues_pairing.js
 
 (() => {
 
@@ -3448,7 +3448,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Dialogue v1.3.12 loaded.');
+      log(config, 'Dialogue v1.4.0 loaded.');
     } catch (error) {
       console.error(
         `[Vox] initialization failed: ${error?.message ?? error}`
