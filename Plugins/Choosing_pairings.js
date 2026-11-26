@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.8
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.9
 //@api 3.0
-//@version 1.3.8
+//@version 1.3.9
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -40,8 +40,31 @@
     const button = document.getElementById('bt-clear-sources');
     if (!button) return;
     button.disabled = pendingSources.length === 0;
-    button.dataset.notice = String(Boolean(pendingSourceNotice));
-    button.textContent = pendingSourceNotice || `수집한 원문 (${pendingSources.length}개) 비우기`;
+    setButtonLabel(button, `수집한 원문 (${pendingSources.length}개) 비우기`);
+    setButtonNotice(button, pendingSourceNotice);
+  }
+
+  function setButtonLabel(button, text) {
+    let label = button.querySelector('.bt-button-label');
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'bt-button-label';
+      label.setAttribute('aria-hidden', 'true');
+      button.replaceChildren(label);
+    }
+    label.textContent = text;
+  }
+
+  function setButtonNotice(button, message = '') {
+    if (!button) return;
+    const changed = button.dataset.noticeText !== message;
+    button.dataset.notice = String(Boolean(message));
+    button.dataset.noticeText = message;
+    button.setAttribute('aria-label', message || button.querySelector('.bt-button-label')?.textContent || '');
+    if (changed && message) {
+      const announcement = document.getElementById('bt-button-announcement');
+      if (announcement) announcement.textContent = message;
+    }
   }
 
   function clearPendingSources() {
@@ -1051,11 +1074,15 @@
         .bt-option-radio::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: 0; }
         .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
         .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
-        .bt-option-source { color: var(--bt-option-source, #b6997c); }
+        .bt-option-source { position: relative; isolation: isolate; color: inherit; white-space: nowrap; }
+        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(182, 153, 124, 0.3)); border-radius: 2px; pointer-events: none; }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
-        #bt-clear-sources { height: 56px; min-height: 56px; max-height: 56px; padding-block: 6px; line-height: 1.3; overflow: hidden; }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
-        #bt-clear-sources[data-notice="true"] { font-size: 0.86rem; font-weight: 400; }
+        .bt-save { position: relative; }
+        .bt-button-label { display: block; }
+        .bt-save[data-notice="true"] > .bt-button-label { visibility: hidden; }
+        .bt-save[data-notice="true"]::after { content: attr(data-notice-text); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 4px 10px; color: var(--bt-text); font-size: 0.86rem; font-weight: 400; line-height: 1.3; white-space: normal; text-align: center; pointer-events: none; }
+        .bt-live-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
         .bt-settings-footer > .bt-status:empty { display: none; }
         .bt-settings { padding-top: 2px; }
         .bt-setting-divider { min-height: 40px; padding: 8px 0; position: sticky; top: var(--bt-sticky-offset); z-index: 20; display: flex; align-items: center; gap: 12px; margin: 20px 0 17px; color: var(--bt-muted); font-size: 0.9rem; text-align: center; background: var(--bt-bg); }
@@ -1085,7 +1112,7 @@
         .bt-toggle-field .bt-label { margin-bottom: 3px; }
         .bt-toggle-field .bt-description { grid-column: 1; margin: 0; }
         .bt-toggle-field input { grid-column: 2; grid-row: 1 / span 2; width: 21px; height: 21px; accent-color: var(--bt-selected); }
-        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 90%; margin: 10px auto 12px; }
+        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; margin: 10px 0 26px; }
         .bt-operation-status { grid-column: 1 / -1; margin: 0; }
         .bt-operation-status:empty { display: none; }
         .bt-top-toggle { min-width: 0; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; padding: 12px; }
@@ -1488,6 +1515,7 @@
     const settings = document.createElement('section');
     settings.className = 'bt-settings';
     const inputs = new Map();
+    settings.appendChild(createOperationControls());
 
 
 
@@ -1837,8 +1865,13 @@
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'bt-save';
-    save.textContent = '설정 저장';
+    save.id = 'bt-save-settings';
+    setButtonLabel(save, '설정 저장');
+    setButtonNotice(save);
+    let saveNoticeTimer = null;
     save.addEventListener('click', async () => {
+      if (saveNoticeTimer) clearTimeout(saveNoticeTimer);
+      setButtonNotice(save);
       status.textContent = '';
       status.dataset.error = 'false';
       captureDraft();
@@ -1856,7 +1889,11 @@
         await persistGlossaryStateNow(memoryGlossaryState);
         settingsSavedSnapshot = settingsSnapshot(savingDraft);
         syncUnsavedNotice();
-        status.textContent = '저장되었습니다.';
+        setButtonNotice(save, '저장되었습니다.');
+        saveNoticeTimer = setTimeout(() => {
+          saveNoticeTimer = null;
+          setButtonNotice(save);
+        }, 1800);
       } catch (error) {
         status.dataset.error = 'true';
         status.textContent = `저장하지 못했습니다: ${error?.message ?? error}`;
@@ -1897,7 +1934,12 @@
       }
       syncPendingSourcesButton();
     });
-    footer.append(status, clearSources, save);
+    const announcement = document.createElement('span');
+    announcement.id = 'bt-button-announcement';
+    announcement.className = 'bt-live-status';
+    announcement.setAttribute('role', 'status');
+    announcement.setAttribute('aria-live', 'polite');
+    footer.append(status, clearSources, save, announcement);
 
     const scroll = document.createElement('div');
     scroll.className = 'bt-settings-scroll';
@@ -1919,13 +1961,10 @@
       const label = document.createElement('span');
       label.className = 'bt-option-label';
       button.replaceChildren(label);
-      for (const part of text.split(/(번역문|원문)/g)) {
+      for (const part of text.split(/(\(원문\)|번역문|원문)/g)) {
         const span = document.createElement('span');
         span.textContent = part;
-        if (part === '원문') {
-          span.className = 'bt-option-source';
-          span.style.setProperty('color', 'var(--bt-option-source, #b6997c)', 'important');
-        }
+        if (part === '원문' || part === '(원문)') span.className = 'bt-option-source';
         if (part === '번역문') span.className = 'bt-option-translation';
         label.appendChild(span);
       }
@@ -2536,7 +2575,6 @@
 
     const { wrapper: modeHeader, closeMenu } = createModeHeader(state, activeTab);
     fixedTop.appendChild(modeHeader);
-    fixedTop.appendChild(createOperationControls());
     app.onclick = event => { if (!modeHeader.contains(event.target)) closeMenu(); };
     enableFloatingWindowDrag(app, modeHeader.querySelector('.bt-head'));
 
@@ -4107,7 +4145,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.8 loaded.');
+      log(config, 'Versa v1.3.9 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
