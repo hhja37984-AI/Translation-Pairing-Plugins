@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.5
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.6
 //@api 3.0
-//@version 1.3.5
+//@version 1.3.6
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -25,12 +25,22 @@
   let pendingSourceGeneration = 0;
   let pendingSourceNotice = '';
   let pendingSourceNoticeTimer = null;
+  let pendingSourceClearSnapshot = null;
 
   function syncPendingSourcesButton() {
+    if (pendingSourceClearSnapshot &&
+        (pendingSourceClearSnapshot.length !== pendingSources.length ||
+         pendingSourceClearSnapshot.some((source, index) => source !== pendingSources[index]))) {
+      pendingSourceClearSnapshot = null;
+      pendingSourceNotice = '';
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      pendingSourceNoticeTimer = null;
+    }
     if (typeof document === 'undefined') return;
     const button = document.getElementById('bt-clear-sources');
     if (!button) return;
-    button.disabled = pendingSources.length <= 1;
+    button.disabled = pendingSources.length === 0;
+    button.dataset.notice = String(Boolean(pendingSourceNotice));
     button.textContent = pendingSourceNotice || `수집한 원문 (${pendingSources.length}개) 비우기`;
   }
 
@@ -967,14 +977,14 @@
         .bt-title { padding-right: 10px; margin: 0; font-size: 1.5rem; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .bt-description.bt-unsaved-notice { grid-column: 1 / -1; text-align: right; margin: 0; color: #d66f6f; }
         .bt-unsaved-notice[hidden] { display: none; }
-        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 10px; }
+        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 6px; }
         .bt-icon:active, .bt-tab:active, .bt-add:active, .bt-save:active { background: color-mix(in srgb, var(--bt-text) 10%, transparent); }
         .bt-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--bt-border); margin-bottom: 6px; background: var(--bt-bg); }
         .bt-tab-cell { position: relative; display: flex; align-items: stretch; justify-content: center; border-bottom: 2px solid transparent; }
         .bt-tab-cell[data-selected="true"] { border-bottom-color: var(--bt-selected); }
         .bt-tab { min-width: 0; border: 0; padding: 12px 4px 10px 8px; background: transparent; color: var(--bt-muted); font-size: 1.1rem; cursor: pointer; }
         .bt-tab[aria-selected="true"] { color: var(--bt-text); border-bottom-color: var(--bt-selected); font-weight: 700; }
-        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 50%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
+        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 30%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
         .bt-help[aria-expanded="true"] { border-color: var(--bt-text); color: var(--bt-text); }
         .bt-tooltip { position: absolute; z-index: 5; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: min(340px, calc(100vw - 56px)); padding: 11px 12px; border: 1px solid var(--bt-border); border-radius: 10px; background: var(--bt-button); color: var(--bt-text); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32); font-size: 0.92rem; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; }
         .bt-tab-cell:last-child .bt-tooltip { right: 8px; left: auto; transform: none; }
@@ -984,7 +994,7 @@
         .bt-regex-heading-title { margin: 0; font-size: 1.1rem; font-weight: 800; line-height: 1.3; }
         .bt-regex-heading .bt-help { margin-left: 0; margin-right: 0; }
         .bt-regex-heading .bt-tooltip { top: calc(100% - 2px); left: 0; transform: none; }
-        .bt-list { border: 1px solid var(--bt-border); border-radius: 14px; overflow: hidden; background: var(--bt-panel); }
+        .bt-list { border: 1px solid var(--bt-border); border-radius: 8.4px; overflow: hidden; background: var(--bt-panel); }
         .bt-rule { border-bottom: 1px solid var(--bt-border); }
         .bt-rule:last-child { border-bottom: 0; }
         .bt-row { display: grid; grid-template-columns: 1fr 50px; align-items: stretch; min-height: 58px; }
@@ -994,7 +1004,7 @@
         .bt-inline-editor { padding: 20px 18px 4px; background: color-mix(in srgb, var(--bt-panel) 88%, var(--bt-bg)); }
         .bt-inline-editor .bt-area { min-height: 96px; }
         .bt-empty { padding: 30px 18px; color: var(--bt-muted); font-size: 1.1rem; text-align: center; }
-        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
+        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
         .bt-field.bt-name-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
@@ -1020,23 +1030,24 @@
         .bt-mode-head { position: relative; z-index: 20; margin-bottom: 18px; }
         .bt-title-button { width: 100%; min-width: 0; border: 0; padding: 4px 2px; background: transparent; color: var(--bt-text); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
         .bt-mode-arrow { color: var(--bt-text); font-size: 10px; }
-        .bt-mode-option { position: absolute; z-index: 1; top: calc(100% + 4px); right: 48px; left: 48px; display: block; width: auto; margin: 0; border: 1px solid var(--bt-border); border-radius: 10px; padding: 11px 2px; background: var(--bt-bg); color: var(--bt-text); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; white-space: nowrap; cursor: pointer; }
+        .bt-mode-option { position: absolute; z-index: 1; top: calc(100% + 4px); right: 48px; left: 48px; display: block; width: auto; margin: 0; border: 1px solid var(--bt-border); border-radius: 6px; padding: 11px 2px; background: var(--bt-bg); color: var(--bt-text); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24); font-size: clamp(1.2rem, 4.6vw, 1.85rem); font-weight: 700; text-align: center; white-space: nowrap; cursor: pointer; }
         .bt-mode-option:hover, .bt-mode-option:active { background: var(--bt-button); }
         .bt-mode-option[hidden] { display: none !important; }
         .bt-settings [hidden] { display: none !important; }
         select.bt-input, select.bt-input option { color: var(--bt-text); background: var(--bt-panel); }
-        .bt-select-trigger { text-align: left; cursor: pointer; }
+        .bt-select-trigger { text-align: left; cursor: pointer; border-radius: 4.8px; }
         .bt-select-trigger::after { content: '▾'; float: right; margin-left: 8px; color: var(--bt-muted); }
         .bt-option-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.48); }
         .bt-option-popup { width: min(100%, 420px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid var(--bt-border); border-radius: 16px; background: var(--bt-panel); color: var(--bt-text); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3); }
-        .bt-option-title { padding: 20px; font-size: 1.1rem; font-weight: 700; }
-        .bt-option-choice, .bt-option-cancel { display: block; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
+        .bt-option-choice { display: block; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
         .bt-option-choice[aria-checked="true"] { background: var(--bt-button); box-shadow: inset 3px 0 var(--bt-selected); }
-        .bt-option-choice:hover, .bt-option-choice:focus-visible, .bt-option-cancel:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
-        .bt-option-cancel { text-align: center; color: var(--bt-muted); }
+        .bt-option-choice:hover, .bt-option-choice:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
+        .bt-option-choice:first-child { border-top: 0; }
         .bt-option-source { color: var(--bt-option-source, #b6997c); }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
+        #bt-clear-sources[data-notice="true"] { font-size: 0.86rem; font-weight: 400; }
+        .bt-settings-footer > .bt-status:empty { display: none; }
         .bt-settings { padding-top: 2px; }
         .bt-setting-divider { min-height: 40px; padding: 8px 0; position: sticky; top: var(--bt-sticky-offset); z-index: 20; display: flex; align-items: center; gap: 12px; margin: 20px 0 17px; color: var(--bt-muted); font-size: 0.9rem; text-align: center; background: var(--bt-bg); }
         .bt-setting-divider::before, .bt-setting-divider::after { content: ''; flex: 1; height: 1px; background: var(--bt-border); }
@@ -1047,13 +1058,13 @@
         .bt-toggle-field.is-off .bt-label { color: var(--bt-muted); }
         .bt-badge-toggle { position: relative; cursor: pointer; }
         .bt-badge-toggle input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
+        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 3.6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
         .is-off .bt-toggle-badge { border-color: color-mix(in srgb, var(--bt-selected) 20%, transparent); background: transparent; color: var(--bt-muted); }
         .bt-badge-toggle input:focus-visible + .bt-toggle-badge { outline: 2px solid var(--bt-selected); outline-offset: 3px; }
         .bt-number-stepper { position: relative; }
         .bt-number-stepper .bt-input { padding-right: 80px; appearance: textfield; -moz-appearance: textfield; }
         .bt-number-stepper input::-webkit-inner-spin-button, .bt-number-stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 7px 7px 0; }
+        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 4.2px 4.2px 0; }
         .bt-stepper-buttons button { border: 0; background: var(--bt-button); cursor: pointer; font-size: 0.65rem; padding: 0; }
         .bt-stepper-buttons button + button { border-left: 1px solid var(--bt-border); }
         .bt-stepper-buttons button:disabled { opacity: 0.35; cursor: default; }
@@ -1061,7 +1072,7 @@
         .bt-description { display: block; margin: -3px 0 8px; color: var(--bt-muted); font-size: 0.86rem; line-height: 1.45; }
         .bt-settings .bt-field { margin-bottom: 26px; }
         .bt-settings .bt-input { min-height: 44px; }
-        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 12px; background: var(--bt-panel); }
+        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; background: var(--bt-panel); }
         .bt-toggle-field .bt-label { margin-bottom: 3px; }
         .bt-toggle-field .bt-description { grid-column: 1; margin: 0; }
         .bt-toggle-field input { grid-column: 2; grid-row: 1 / span 2; width: 21px; height: 21px; accent-color: var(--bt-selected); }
@@ -1083,14 +1094,14 @@
         .bt-flags { display: flex; align-items: center; gap: 16px; margin-top: 9px; color: var(--bt-muted); font-size: 0.86rem; }
         .bt-flag { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
         .bt-flag input { width: 17px; height: 17px; accent-color: var(--bt-selected); }
-        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 999px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 10px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
         .bt-glossary-chip[data-enabled="true"] { border-color: var(--bt-selected); background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); }
         .bt-glossary-chip:active { transform: translateY(1px); }
         .bt-error { min-height: 1.4em; margin: -5px 0 10px; color: #d66f6f; font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status { text-align: center; min-height: 1.4em; margin: 0 0 8px; color: var(--bt-muted); font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status[data-error="true"] { color: #d66f6f; }
-        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 10px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
-        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 12px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
+        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 0 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
+        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
         .bt-wrap, .bt-settings-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-border) 72%, transparent) transparent; }
         .bt-wrap::-webkit-scrollbar, .bt-settings-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
         .bt-wrap::-webkit-scrollbar-track, .bt-settings-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -1831,14 +1842,27 @@
     clearSources.style.marginBottom = '8px';
     clearSources.title = '번역이 끝나거나 중단된 뒤 사용하세요. 병기 대기 중인 원문을 모두 비웁니다.';
     clearSources.addEventListener('click', () => {
-      const count = clearPendingSources();
-      pendingSourceNotice = `수집한 원문 ${count}건을 비웠습니다`;
+      if (pendingSources.length === 0) return;
       if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
-      pendingSourceNoticeTimer = setTimeout(() => {
-        pendingSourceNoticeTimer = null;
-        pendingSourceNotice = '';
-        syncPendingSourcesButton();
-      }, 1800);
+      if (!pendingSourceClearSnapshot) {
+        pendingSourceClearSnapshot = pendingSources.slice();
+        pendingSourceNotice = `한 번 더 누르면 수집한 원문 (${pendingSources.length}개)를 비웁니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceClearSnapshot = null;
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 4000);
+      } else {
+        pendingSourceClearSnapshot = null;
+        const count = clearPendingSources();
+        pendingSourceNotice = `수집한 원문 ${count}개를 비웠습니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 1800);
+      }
       syncPendingSourcesButton();
     });
     footer.append(status, clearSources, save);
@@ -1864,7 +1888,10 @@
       for (const part of text.split(/(번역문|원문)/g)) {
         const span = document.createElement('span');
         span.textContent = part;
-        if (part === '원문') span.className = 'bt-option-source';
+        if (part === '원문') {
+          span.className = 'bt-option-source';
+          span.style.color = settingsDraft?.config.source_color || '#b6997c';
+        }
         if (part === '번역문') span.className = 'bt-option-translation';
         button.appendChild(span);
       }
@@ -1881,9 +1908,6 @@
       popup.setAttribute('role', 'dialog');
       popup.setAttribute('aria-modal', 'true');
       popup.setAttribute('aria-label', item.label);
-      const title = document.createElement('div');
-      title.className = 'bt-option-title';
-      title.textContent = item.label;
       const list = document.createElement('div');
       list.className = 'bt-option-list';
       list.setAttribute('role', 'radiogroup');
@@ -1911,12 +1935,7 @@
         buttons.push(choice);
         list.appendChild(choice);
       }
-      const cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.className = 'bt-option-cancel';
-      cancel.textContent = '취소';
-      cancel.addEventListener('click', close);
-      popup.append(title, list, cancel);
+      popup.appendChild(list);
       overlay.appendChild(popup);
       overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
       overlay.addEventListener('keydown', event => {
@@ -1931,7 +1950,7 @@
             : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
           buttons[next]?.focus();
         } else if (event.key === 'Tab') {
-          const controls = [...buttons, cancel];
+          const controls = buttons;
           const index = controls.indexOf(document.activeElement);
           event.preventDefault();
           controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
@@ -1939,7 +1958,7 @@
       });
       trigger.setAttribute('aria-expanded', 'true');
       document.getElementById('bt-app').appendChild(overlay);
-      (buttons[options.findIndex(option => option[0] === trigger.value)] ?? buttons[0] ?? cancel).focus();
+      (buttons[options.findIndex(option => option[0] === trigger.value)] ?? buttons[0])?.focus();
     });
     syncLabel();
     return trigger;
@@ -4099,7 +4118,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.5 loaded.');
+      log(config, 'Versa v1.3.6 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
