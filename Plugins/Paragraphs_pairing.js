@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️ 원문-번역문 병기 v1.3.4
+//@display-name ✌️ 원문-번역문 병기 v1.3.11
 //@api 3.0
-//@version 1.3.4
+//@version 1.3.11
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Paragraphs_pairing.js
 
 (() => {
@@ -23,11 +23,15 @@
   const CONFIG_STORAGE_KEY = 'bilingual_translation_config_v1';
   const pendingSources = [];
   let pendingSourceGeneration = 0;
+  let pendingSourceNotice = '';
+  let pendingSourceNoticeTimer = null;
+  let pendingSourceClearSnapshot = null;
 
   function clearPendingSources() {
     const count = pendingSources.length;
     pendingSources.length = 0;
     pendingSourceGeneration += 1;
+    syncPendingSourcesButton();
     return count;
   }
   const RETRY_GUARD_MARKER = '<!-- start -->';
@@ -45,6 +49,7 @@
     if (pending.generation !== pendingSourceGeneration) return messages;
     if (!config.retryGuardEnabled) {
       pendingSources.push(pending);
+      syncPendingSourcesButton();
       return messages;
     }
     const result = messages.slice();
@@ -62,6 +67,7 @@
     }
     pending.retryGuardMarker = RETRY_GUARD_MARKER;
     pendingSources.push(pending);
+    syncPendingSourcesButton();
     return result;
   }
 
@@ -122,7 +128,11 @@
 
   function syncUnsavedNotice() {
     const notice = document.getElementById('bt-unsaved-notice');
-    if (notice) notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    if (notice) {
+      notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+      const head = notice.closest('.bt-head');
+      if (head) head.dataset.unsaved = String(!notice.hidden);
+    }
   }
 
   let ruleSaveTimer = null;
@@ -149,6 +159,7 @@
     return {
       plugin_enabled: '1',
       enabled: '1',
+      paragraph_source_position: 'above',
       source_message_role: 'any',
       source_start_pattern: DEFAULT_START_PATTERN,
       source_end_pattern: 'NONE',
@@ -560,6 +571,253 @@
     return text.trim().toUpperCase() === 'NONE' ? '' : text;
   }
 
+  function syncPendingSourcesButton() {
+    if (pendingSourceClearSnapshot &&
+        (pendingSourceClearSnapshot.length !== pendingSources.length ||
+         pendingSourceClearSnapshot.some((source, index) => source !== pendingSources[index]))) {
+      pendingSourceClearSnapshot = null;
+      pendingSourceNotice = '';
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      pendingSourceNoticeTimer = null;
+    }
+    if (typeof document === 'undefined') return;
+    const button = document.getElementById('bt-clear-sources');
+    if (!button) return;
+    button.disabled = pendingSources.length === 0;
+    setButtonLabel(button, `수집한 원문 (${pendingSources.length}개) 비우기`);
+    setButtonNotice(button, pendingSourceNotice);
+  }
+
+
+  function setButtonLabel(button, text) {
+    let label = button.querySelector('.bt-button-label');
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'bt-button-label';
+      label.setAttribute('aria-hidden', 'true');
+      button.replaceChildren(label);
+    }
+    label.textContent = text;
+  }
+
+
+  function setButtonNotice(button, message = '') {
+    if (!button) return;
+    const changed = button.dataset.noticeText !== message;
+    button.dataset.notice = String(Boolean(message));
+    button.dataset.noticeText = message;
+    button.setAttribute('aria-label', message || button.querySelector('.bt-button-label')?.textContent || '');
+    if (changed && message) {
+      const announcement = document.getElementById('bt-button-announcement');
+      if (announcement) announcement.textContent = message;
+    }
+  }
+
+
+  function createOperationControls() {
+    if (!settingsDraft) resetSettingsDraft();
+    const inputs = new Map();
+    const status = document.createElement('div');
+    status.className = 'bt-status bt-operation-status';
+    const topToggleGrid = document.createElement('div');
+    topToggleGrid.className = 'bt-top-toggle-grid';
+    const topToggleFields = new Map();
+
+    const topToggles = [
+      {
+        key: 'plugin_enabled',
+        label: '✌️ 플러그인 전체',
+        description:
+          '플러그인 자체 ON/OFF',
+      },
+      {
+        key: 'enabled',
+        label: '원문-번역문 조립',
+        iconSvg: ASSEMBLY_TOGGLE_ICON,
+        description: '번역 결과물을 원문-번역문 형태로 출력합니다.',
+      },
+      {
+        key: 'translation_context_enabled',
+        label: '이전 메시지 제공',
+        iconSvg: CONTEXT_TOGGLE_ICON,
+        description: '이전 N개 메시지를 참고용 문맥으로 제공합니다.',
+      },
+    ];
+
+    for (const item of topToggles) {
+      const field = document.createElement('label');
+      field.className = 'bt-toggle-field bt-top-toggle';
+      if (item.key === 'plugin_enabled') field.classList.add('bt-master-toggle');
+      field.title = item.description;
+
+      const label = document.createElement('span');
+      label.className = 'bt-label';
+      if (item.iconSvg) {
+        label.classList.add('bt-label-with-icon');
+        const icon = document.createElement('span');
+        icon.className = 'bt-label-icon';
+        icon.innerHTML = item.iconSvg;
+        label.append(icon, document.createTextNode(item.label));
+      } else {
+        label.textContent = item.label;
+      }
+
+      const description = document.createElement('span');
+      description.className = 'bt-description';
+      description.textContent = item.description;
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = String(settingsDraft.config[item.key] ?? '1') !== '0';
+      const syncOwnToggleState = () => {
+        field.classList.toggle('is-off', !input.checked);
+      };
+      input.addEventListener('change', syncOwnToggleState);
+      input.addEventListener('change', () => {
+        const value = input.checked ? '1' : '0';
+        settingsDraft.config[item.key] = value;
+        configAutoSaveChain = configAutoSaveChain
+          .then(async () => {
+            memoryConfigState = await saveConfigState({
+              ...memoryConfigState,
+              [item.key]: value,
+            });
+          })
+          .catch((error) => {
+            status.dataset.error = 'true';
+            status.textContent = `ON/OFF 설정을 저장하지 못했습니다: ${error?.message ?? error}`;
+          });
+      });
+      syncOwnToggleState();
+      inputs.set(item.key, input);
+      topToggleFields.set(item.key, field);
+      field.append(label, description, input);
+      topToggleGrid.appendChild(field);
+    }
+
+    const pluginToggle = inputs.get('plugin_enabled');
+    const syncPluginDependentToggles = () => {
+      const pluginOn = pluginToggle?.checked !== false;
+      for (const key of ['enabled', 'translation_context_enabled']) {
+        const input = inputs.get(key);
+        const field = topToggleFields.get(key);
+        if (input) input.disabled = !pluginOn;
+        field?.classList.toggle('is-disabled', !pluginOn);
+        field?.setAttribute('aria-disabled', String(!pluginOn));
+      }
+    };
+    pluginToggle?.addEventListener('change', syncPluginDependentToggles);
+    syncPluginDependentToggles();
+
+    topToggleGrid.appendChild(status);
+    return topToggleGrid;
+  }
+
+
+  function createPopupSelect(item, initialValue) {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'bt-input bt-select-trigger';
+    trigger.value = initialValue;
+    trigger.setAttribute('aria-label', item.label);
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    const options = item.options ?? [];
+    const renderChoice = (button, text) => {
+      const label = document.createElement('span');
+      label.className = 'bt-option-label';
+      button.replaceChildren(label);
+      for (const part of text.split(/(\(원문\)|번역문|원문)/g)) {
+        const span = document.createElement('span');
+        span.textContent = part;
+        if (part === '원문' || part === '(원문)') span.className = 'bt-option-source';
+        if (part === '번역문') span.className = 'bt-option-translation';
+        label.appendChild(span);
+      }
+    };
+    const syncLabel = () => renderChoice(trigger, (options.find(option => option[0] === trigger.value) ?? options[0] ?? ['', ''])[1]);
+    trigger.addEventListener('click', event => {
+      event.preventDefault();
+      if (trigger.getAttribute('aria-expanded') === 'true') return;
+      const overlay = document.createElement('div');
+      overlay.className = 'bt-option-overlay';
+      const popup = document.createElement('div');
+      popup.className = 'bt-option-popup';
+      popup.setAttribute('role', 'dialog');
+      popup.setAttribute('aria-modal', 'true');
+      popup.setAttribute('aria-label', item.label);
+      const list = document.createElement('div');
+      list.className = 'bt-option-list';
+      list.setAttribute('role', 'radiogroup');
+      list.setAttribute('aria-label', item.label);
+      const buttons = [];
+      const close = () => {
+        overlay.remove();
+        trigger.setAttribute('aria-expanded', 'false');
+        if (trigger.isConnected) trigger.focus();
+      };
+      for (const [value, text] of options) {
+        const choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = 'bt-option-choice';
+        choice.setAttribute('role', 'radio');
+        choice.setAttribute('aria-checked', String(value === trigger.value));
+        renderChoice(choice, text);
+        const indicator = document.createElement('span');
+        indicator.className = 'bt-option-radio';
+        indicator.setAttribute('aria-hidden', 'true');
+        choice.appendChild(indicator);
+        choice.addEventListener('click', () => {
+          trigger.value = value;
+          syncLabel();
+          trigger.dispatchEvent(new Event('input', { bubbles: true }));
+          trigger.dispatchEvent(new Event('change', { bubbles: true }));
+          close();
+        });
+        buttons.push(choice);
+        list.appendChild(choice);
+      }
+      popup.appendChild(list);
+      overlay.appendChild(popup);
+      overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const index = buttons.indexOf(document.activeElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+          buttons[next]?.focus();
+        } else if (event.key === 'Tab') {
+          const controls = buttons;
+          const index = controls.indexOf(document.activeElement);
+          event.preventDefault();
+          controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
+        }
+      });
+      trigger.setAttribute('aria-expanded', 'true');
+      document.getElementById('bt-app').appendChild(overlay);
+      (buttons[options.findIndex(option => option[0] === trigger.value)] ?? buttons[0])?.focus();
+    });
+    syncLabel();
+    return trigger;
+  }
+
+
+  function getUiMode() {
+    return 'bilingual';
+  }
+
+  function joinParagraphPair(original, translation, separator, config) {
+    return config.paragraphSourcePosition === 'below'
+      ? translation + separator + original
+      : original + separator + translation;
+  }
+
+
   /* ---------------- Pattern helpers ---------------- */
 
   function parsePatternToken(token, { noneAllowed = false } = {}) {
@@ -711,6 +969,8 @@
 
     const pluginEnabled = getInt('plugin_enabled', 1) !== 0;
     const enabled = getInt('enabled', 1) !== 0;
+    const paragraphSourcePosition = getString('paragraph_source_position', 'above') === 'below' ? 'below' : 'above';
+
     const sourceMessageRole = getString('source_message_role', 'any')
       .trim()
       .toLowerCase();
@@ -788,6 +1048,7 @@
     return {
       pluginEnabled,
       enabled,
+      paragraphSourcePosition,
       sourceMessageRole,
       sourceStartPattern,
       sourceEndPattern,
@@ -937,18 +1198,19 @@
         .bt-fixed-top { position: sticky; top: -20px; z-index: 40; margin: -20px -18px 0; padding: 20px 18px 0; background: var(--bt-bg); }
         .bt-wrap-settings .bt-fixed-top { position: relative; top: auto; flex: 0 0 auto; }
         .bt-settings-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding-top: 2px; }
-        .bt-head { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
+        .bt-head { position: relative; display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
         .bt-title { padding-right: 10px; margin: 0; font-size: 1.5rem; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bt-description.bt-unsaved-notice { grid-column: 1 / -1; text-align: right; margin: 0; color: #d66f6f; }
+        .bt-description.bt-unsaved-notice { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+        .bt-head[data-unsaved="true"]::after { content: attr(data-unsaved-text); position: absolute; top: 100%; left: 0; right: 0; color: #d66f6f; font-size: 0.78rem; font-weight: 400; line-height: 1.2; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
         .bt-unsaved-notice[hidden] { display: none; }
-        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 10px; }
+        .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 6px; }
         .bt-icon:active, .bt-tab:active, .bt-add:active, .bt-save:active { background: color-mix(in srgb, var(--bt-text) 10%, transparent); }
         .bt-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--bt-border); margin-bottom: 6px; background: var(--bt-bg); }
         .bt-tab-cell { position: relative; display: flex; align-items: stretch; justify-content: center; border-bottom: 2px solid transparent; }
         .bt-tab-cell[data-selected="true"] { border-bottom-color: var(--bt-selected); }
         .bt-tab { min-width: 0; border: 0; padding: 12px 4px 10px 8px; background: transparent; color: var(--bt-muted); font-size: 1.1rem; cursor: pointer; }
         .bt-tab[aria-selected="true"] { color: var(--bt-text); border-bottom-color: var(--bt-selected); font-weight: 700; }
-        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 50%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
+        .bt-help { flex: 0 0 auto; align-self: center; width: 18px; height: 18px; margin-right: 6px; padding: 0; border: 1px solid var(--bt-muted); border-radius: 30%; background: transparent; color: var(--bt-muted); font-size: 0.78rem; font-weight: 800; text-align: center; cursor: pointer; }
         .bt-help[aria-expanded="true"] { border-color: var(--bt-text); color: var(--bt-text); }
         .bt-tooltip { position: absolute; z-index: 5; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: min(340px, calc(100vw - 56px)); padding: 11px 12px; border: 1px solid var(--bt-border); border-radius: 10px; background: var(--bt-button); color: var(--bt-text); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32); font-size: 0.92rem; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; }
         .bt-tab-cell:last-child .bt-tooltip { right: 8px; left: auto; transform: none; }
@@ -958,7 +1220,7 @@
         .bt-regex-heading-title { margin: 0; font-size: 1.1rem; font-weight: 800; line-height: 1.3; }
         .bt-regex-heading .bt-help { margin-left: 0; margin-right: 0; }
         .bt-regex-heading .bt-tooltip { top: calc(100% - 2px); left: 0; transform: none; }
-        .bt-list { border: 1px solid var(--bt-border); border-radius: 14px; overflow: hidden; background: var(--bt-panel); }
+        .bt-list { border: 1px solid var(--bt-border); border-radius: 8.4px; overflow: hidden; background: var(--bt-panel); }
         .bt-rule { border-bottom: 1px solid var(--bt-border); }
         .bt-rule:last-child { border-bottom: 0; }
         .bt-row { display: grid; grid-template-columns: 1fr 50px; align-items: stretch; min-height: 58px; }
@@ -968,7 +1230,7 @@
         .bt-inline-editor { padding: 20px 18px 4px; background: color-mix(in srgb, var(--bt-panel) 88%, var(--bt-bg)); }
         .bt-inline-editor .bt-area { min-height: 96px; }
         .bt-empty { padding: 30px 18px; color: var(--bt-muted); font-size: 1.1rem; text-align: center; }
-        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
+        .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
         .bt-field.bt-name-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
@@ -991,6 +1253,31 @@
         .bt-wrapper-editor:focus-within { border-radius: 8px; box-shadow: 0 0 0 1px var(--bt-border); }
         .bt-wrapper-editor > .bt-area:focus { box-shadow: none; }
         .bt-readonly-hint { color: var(--bt-muted); font-size: 0.86rem; line-height: 1.45; cursor: default; user-select: none; }
+        .bt-settings [hidden] { display: none !important; }
+        select.bt-input, select.bt-input option { color: var(--bt-text); background: var(--bt-panel); }
+        .bt-select-trigger { text-align: left; cursor: pointer; border-radius: 4.8px; }
+        .bt-select-trigger::after { content: '▾'; float: right; margin-left: 8px; color: var(--bt-muted); }
+        .bt-option-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.48); }
+        .bt-option-popup { width: min(100%, 420px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid var(--bt-border); border-radius: 16px; background: var(--bt-panel); color: var(--bt-text); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3); }
+        .bt-option-choice { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
+        .bt-option-choice[aria-checked="true"] { background: var(--bt-button); box-shadow: inset 3px 0 var(--bt-selected); }
+        .bt-option-choice:hover, .bt-option-choice:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
+        .bt-option-choice:first-child { border-top: 0; }
+        .bt-option-label { min-width: 0; flex: 1; }
+        .bt-option-radio { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-left: auto; align-items: center; justify-content: center; border: 2px solid var(--bt-muted); border-radius: 50%; }
+        .bt-option-radio::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: 0; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
+        .bt-option-source { position: relative; isolation: isolate; color: inherit; white-space: nowrap; }
+        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(255, 235, 59, 0.3)); border-radius: 1px; pointer-events: none; }
+        .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
+        #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
+        .bt-save { position: relative; }
+        .bt-button-label { display: block; }
+        .bt-save[data-notice="true"] > .bt-button-label { visibility: hidden; }
+        .bt-save[data-notice="true"]::after { content: attr(data-notice-text); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 4px 10px; color: var(--bt-text); font-size: 0.86rem; font-weight: 400; line-height: 1.3; white-space: normal; text-align: center; pointer-events: none; }
+        .bt-live-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+        .bt-settings-footer > .bt-status:empty { display: none; }
         .bt-settings { padding-top: 2px; }
         .bt-setting-divider { min-height: 40px; padding: 8px 0; position: sticky; top: var(--bt-sticky-offset); z-index: 20; display: flex; align-items: center; gap: 12px; margin: 20px 0 17px; color: var(--bt-muted); font-size: 0.9rem; text-align: center; background: var(--bt-bg); }
         .bt-setting-divider::before, .bt-setting-divider::after { content: ''; flex: 1; height: 1px; background: var(--bt-border); }
@@ -1001,13 +1288,13 @@
         .bt-toggle-field.is-off .bt-label { color: var(--bt-muted); }
         .bt-badge-toggle { position: relative; cursor: pointer; }
         .bt-badge-toggle input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
+        .bt-toggle-badge { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; padding: 6px 8px; border: 1px solid var(--bt-selected); border-radius: 3.6px; background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); font-size: 0.8rem; font-weight: 800; line-height: 1; }
         .is-off .bt-toggle-badge { border-color: color-mix(in srgb, var(--bt-selected) 20%, transparent); background: transparent; color: var(--bt-muted); }
         .bt-badge-toggle input:focus-visible + .bt-toggle-badge { outline: 2px solid var(--bt-selected); outline-offset: 3px; }
         .bt-number-stepper { position: relative; }
         .bt-number-stepper .bt-input { padding-right: 80px; appearance: textfield; -moz-appearance: textfield; }
         .bt-number-stepper input::-webkit-inner-spin-button, .bt-number-stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 7px 7px 0; }
+        .bt-stepper-buttons { position: absolute; inset: 1px 1px 1px auto; width: 70px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; border-left: 1px solid var(--bt-border); border-radius: 0 4.2px 4.2px 0; }
         .bt-stepper-buttons button { border: 0; background: var(--bt-button); cursor: pointer; font-size: 0.65rem; padding: 0; }
         .bt-stepper-buttons button + button { border-left: 1px solid var(--bt-border); }
         .bt-stepper-buttons button:disabled { opacity: 0.35; cursor: default; }
@@ -1015,11 +1302,13 @@
         .bt-description { display: block; margin: -3px 0 8px; color: var(--bt-muted); font-size: 0.86rem; line-height: 1.45; }
         .bt-settings .bt-field { margin-bottom: 26px; }
         .bt-settings .bt-input { min-height: 44px; }
-        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 12px; background: var(--bt-panel); }
+        .bt-toggle-field { display: grid; grid-template-columns: 1fr auto; column-gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--bt-border); border-radius: 7.2px; background: var(--bt-panel); }
         .bt-toggle-field .bt-label { margin-bottom: 3px; }
         .bt-toggle-field .bt-description { grid-column: 1; margin: 0; }
         .bt-toggle-field input { grid-column: 2; grid-row: 1 / span 2; width: 21px; height: 21px; accent-color: var(--bt-selected); }
-        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 10px 0 26px; }
+        .bt-top-toggle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; margin: 10px 0 26px; }
+        .bt-operation-status { grid-column: 1 / -1; margin: 0; }
+        .bt-operation-status:empty { display: none; }
         .bt-top-toggle { min-width: 0; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; padding: 12px; }
         .bt-top-toggle .bt-label { min-width: 0; margin: 0; font-size: 0.92rem; line-height: 1.32; overflow-wrap: anywhere; }
         .bt-top-toggle .bt-label-with-icon { align-items: flex-start; gap: 6px; }
@@ -1037,14 +1326,14 @@
         .bt-flags { display: flex; align-items: center; gap: 16px; margin-top: 9px; color: var(--bt-muted); font-size: 0.86rem; }
         .bt-flag { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
         .bt-flag input { width: 17px; height: 17px; accent-color: var(--bt-selected); }
-        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 999px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
+        .bt-glossary-chip { align-self: center; justify-self: center; min-width: 58px; margin-left: 10px; border: 1px solid var(--bt-border); border-radius: 10px; padding: 6px 9px; background: transparent; color: var(--bt-muted); font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; cursor: pointer; touch-action: manipulation; }
         .bt-glossary-chip[data-enabled="true"] { border-color: var(--bt-selected); background: color-mix(in srgb, var(--bt-border) 40%, transparent); color: var(--bt-text); }
         .bt-glossary-chip:active { transform: translateY(1px); }
         .bt-error { min-height: 1.4em; margin: -5px 0 10px; color: #d66f6f; font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status { text-align: center; min-height: 1.4em; margin: 0 0 8px; color: var(--bt-muted); font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status[data-error="true"] { color: #d66f6f; }
-        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 10px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
-        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 12px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
+        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 16px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
+        .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
         .bt-wrap, .bt-settings-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-border) 72%, transparent) transparent; }
         .bt-wrap::-webkit-scrollbar, .bt-settings-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
         .bt-wrap::-webkit-scrollbar-track, .bt-settings-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -1069,6 +1358,9 @@
           .bt-tab { padding-inline: 3px; font-size: 0.88rem; }
           .bt-tooltip { font-size: 0.84rem; }
           .bt-regex-heading-title { font-size: 1rem; }
+          .bt-regex-heading { min-height: 36px; padding-block: 6px; }
+          .bt-regex-section .bt-row { min-height: 48px; }
+          .bt-regex-section .bt-open { padding-block: 10px; }
           .bt-open, .bt-empty, .bt-add, .bt-save, .bt-readonly-hint { font-size: 1rem; }
           .bt-regex-section .bt-add { font-size: 1rem; }
           .bt-inline-editor .bt-label { font-size: 0.95rem; }
@@ -1081,7 +1373,7 @@
           .bt-error, .bt-status { font-size: 0.9rem; }
           .bt-help { margin-right: 3px; }
           .bt-inline-editor { padding: 17px 13px 2px; }
-          .bt-top-toggle-grid { gap: 6px; margin-top: 6px;}
+          .bt-top-toggle-grid { width: 100%; gap: 6px; margin-top: 6px; }
           .bt-top-toggle { padding: 10px 8px; column-gap: 5px; }
           .bt-top-toggle .bt-label { font-size: 0.74rem; }
           .bt-top-toggle .bt-label-with-icon { gap: 4px; }
@@ -1130,6 +1422,8 @@
     notice.textContent = '저장하지 않은 설정값이 있습니다.';
     notice.setAttribute('role', 'status');
     notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    head.dataset.unsaved = String(!notice.hidden);
+    head.dataset.unsavedText = notice.textContent;
     head.append(left, heading, close, notice);
     return { head, left };
   }
@@ -1219,100 +1513,36 @@
     const settings = document.createElement('section');
     settings.className = 'bt-settings';
     const inputs = new Map();
+    settings.appendChild(createOperationControls());
 
-    const topToggleGrid = document.createElement('div');
-    topToggleGrid.className = 'bt-top-toggle-grid';
-    const topToggleFields = new Map();
 
-    const topToggles = [
-      {
-        key: 'plugin_enabled',
-        label: '✌️ 플러그인 전체',
-        description:
-          '플러그인 자체 ON/OFF',
-      },
-      {
-        key: 'enabled',
-        label: '원문-번역문 조립',
-        iconSvg: ASSEMBLY_TOGGLE_ICON,
-        description: '번역 결과물을 원문-번역문 형태로 출력합니다.',
-      },
-      {
-        key: 'translation_context_enabled',
-        label: '이전 메시지 제공',
-        iconSvg: CONTEXT_TOGGLE_ICON,
-        description: '이전 N개 메시지를 참고용 문맥으로 제공합니다.',
-      },
-    ];
-
-    for (const item of topToggles) {
-      const field = document.createElement('label');
-      field.className = 'bt-toggle-field bt-top-toggle';
-      if (item.key === 'plugin_enabled') field.classList.add('bt-master-toggle');
-      field.title = item.description;
-
-      const label = document.createElement('span');
-      label.className = 'bt-label';
-      if (item.iconSvg) {
-        label.classList.add('bt-label-with-icon');
-        const icon = document.createElement('span');
-        icon.className = 'bt-label-icon';
-        icon.innerHTML = item.iconSvg;
-        label.append(icon, document.createTextNode(item.label));
-      } else {
-        label.textContent = item.label;
-      }
-
-      const description = document.createElement('span');
-      description.className = 'bt-description';
-      description.textContent = item.description;
-
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = String(settingsDraft.config[item.key] ?? '1') !== '0';
-      const syncOwnToggleState = () => {
-        field.classList.toggle('is-off', !input.checked);
-      };
-      input.addEventListener('change', syncOwnToggleState);
-      input.addEventListener('change', () => {
-        const value = input.checked ? '1' : '0';
-        settingsDraft.config[item.key] = value;
-        configAutoSaveChain = configAutoSaveChain
-          .then(async () => {
-            memoryConfigState = await saveConfigState({
-              ...memoryConfigState,
-              [item.key]: value,
-            });
-          })
-          .catch((error) => {
-            status.dataset.error = 'true';
-            status.textContent = `ON/OFF 설정을 저장하지 못했습니다: ${error?.message ?? error}`;
-          });
-      });
-      syncOwnToggleState();
-      inputs.set(item.key, input);
-      topToggleFields.set(item.key, field);
-      field.append(label, description, input);
-      topToggleGrid.appendChild(field);
-    }
-
-    const pluginToggle = inputs.get('plugin_enabled');
-    const syncPluginDependentToggles = () => {
-      const pluginOn = pluginToggle?.checked !== false;
-      for (const key of ['enabled', 'translation_context_enabled']) {
-        const input = inputs.get(key);
-        const field = topToggleFields.get(key);
-        if (input) input.disabled = !pluginOn;
-        field?.classList.toggle('is-disabled', !pluginOn);
-        field?.setAttribute('aria-disabled', String(!pluginOn));
-      }
-    };
-    pluginToggle?.addEventListener('change', syncPluginDependentToggles);
-    syncPluginDependentToggles();
-
-    settings.appendChild(topToggleGrid);
 
     const items = [
+
+      { divider: '원문-번역문 사이 설정' },
+      {
+        key: 'paragraph_source_position',
+        type: 'select',
+        label: '원문 문단 삽입 위치',
+        description: '',
+        options: [
+          ['above', '위: 원문→번역문'],
+          ['below', '아래: 번역문→원문'],
+        ],
+      },
+      {
+        key: 'source_translation_separator',
+        label: '원문-번역문 사이 구분자',
+        description: 'NONE=없음 (기본: \\n)',
+        placeholder: '\\n',
+      },
+      {
+        key: 'pair_separator',
+        label: '원문+번역문 문단 사이 구분자',
+        description: 'NONE=없음 (기본: \\n\\n)',
+        placeholder: '\\n\\n',
+      },
+
       { divider: '번역 원문 찾기' },
       {
         key: 'source_message_role',
@@ -1335,7 +1565,7 @@
           '문자열=독립된 한 줄, /regex/flags=정규식, NONE=role의 끝 (기본: NONE)',
         placeholder: 'NONE',
       },
-      { divider: '<span>' },
+      { divider: '<span>', group: 'span' },
       {
         key: 'use_source_span',
         type: 'checkbox',
@@ -1361,19 +1591,7 @@
         description: '원문 <span>에 class 명을 추가합니다. (기본: 없음)',
         placeholder: '(비우면 생략)',
       },
-      { divider: '원문-번역문 사이 설정' },
-      {
-        key: 'source_translation_separator',
-        label: '원문-번역문 사이 구분자',
-        description: 'NONE=없음 (기본: \\n)',
-        placeholder: '\\n',
-      },
-      {
-        key: 'pair_separator',
-        label: '원문+번역문 문단 사이 구분자',
-        description: 'NONE=없음 (기본: \\n\\n)',
-        placeholder: '\\n\\n',
-      },
+
       { divider: '이전 메시지 제공' },
       {
         key: 'translation_context_messages',
@@ -1426,7 +1644,7 @@
         key: 'retry_guard_enabled',
         type: 'checkbox',
         label: '재시도 중복 방지',
-        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다. (기본: OFF)',
+        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다.',
       },
       {
         key: 'keep_reasoning_blocks',
@@ -1450,6 +1668,7 @@
         divider.textContent = item.divider;
         settingsSection = document.createElement('section');
         settingsSection.className = 'bt-settings-section';
+        if (item.group) settingsSection.dataset.settingGroup = item.group;
         settings.appendChild(settingsSection);
         settingsSection.appendChild(divider);
         continue;
@@ -1519,6 +1738,8 @@
         };
         input.addEventListener('change', syncOffStyle);
         syncOffStyle();
+      } else if (item.type === 'select') {
+        input = createPopupSelect(item, settingsDraft.config[item.key] ?? item.options?.[0]?.[0] ?? '');
       } else if (item.type === 'textarea') {
         input = document.createElement('textarea');
         input.className = item.tall ? 'bt-area bt-context-template' : 'bt-area';
@@ -1573,6 +1794,8 @@
       settingsSection.appendChild(field);
     }
 
+
+
     const status = document.createElement('div');
     status.className = 'bt-status';
 
@@ -1611,8 +1834,13 @@
     const save = document.createElement('button');
     save.type = 'button';
     save.className = 'bt-save';
-    save.textContent = '설정 저장';
+    save.id = 'bt-save-settings';
+    setButtonLabel(save, '설정 저장');
+    setButtonNotice(save);
+    let saveNoticeTimer = null;
     save.addEventListener('click', async () => {
+      if (saveNoticeTimer) clearTimeout(saveNoticeTimer);
+      setButtonNotice(save);
       status.textContent = '';
       status.dataset.error = 'false';
       captureDraft();
@@ -1630,7 +1858,11 @@
         await persistGlossaryStateNow(memoryGlossaryState);
         settingsSavedSnapshot = settingsSnapshot(savingDraft);
         syncUnsavedNotice();
-        status.textContent = '저장되었습니다.';
+        setButtonNotice(save, '저장되었습니다.');
+        saveNoticeTimer = setTimeout(() => {
+          saveNoticeTimer = null;
+          setButtonNotice(save);
+        }, 1000);
       } catch (error) {
         status.dataset.error = 'true';
         status.textContent = `저장하지 못했습니다: ${error?.message ?? error}`;
@@ -1644,20 +1876,45 @@
     const clearSources = document.createElement('button');
     clearSources.type = 'button';
     clearSources.className = 'bt-save';
-    clearSources.textContent = '수집한 원문 비우기';
+    clearSources.id = 'bt-clear-sources';
     clearSources.style.marginBottom = '8px';
     clearSources.title = '번역이 끝나거나 중단된 뒤 사용하세요. 병기 대기 중인 원문을 모두 비웁니다.';
     clearSources.addEventListener('click', () => {
-      const count = clearPendingSources();
-      status.dataset.error = 'false';
-      status.textContent = `수집한 원문 ${count}건을 비웠습니다.`;
+      if (pendingSources.length === 0) return;
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      if (!pendingSourceClearSnapshot) {
+        pendingSourceClearSnapshot = pendingSources.slice();
+        pendingSourceNotice = `한 번 더 누르면 수집한 원문 (${pendingSources.length}개)를 비웁니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceClearSnapshot = null;
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 4000);
+      } else {
+        pendingSourceClearSnapshot = null;
+        const count = clearPendingSources();
+        pendingSourceNotice = `수집한 원문 ${count}개를 비웠습니다`;
+        pendingSourceNoticeTimer = setTimeout(() => {
+          pendingSourceNoticeTimer = null;
+          pendingSourceNotice = '';
+          syncPendingSourcesButton();
+        }, 1000);
+      }
+      syncPendingSourcesButton();
     });
-    footer.append(status, clearSources, save);
+    const announcement = document.createElement('span');
+    announcement.id = 'bt-button-announcement';
+    announcement.className = 'bt-live-status';
+    announcement.setAttribute('role', 'status');
+    announcement.setAttribute('aria-live', 'polite');
+    footer.append(status, clearSources, save, announcement);
 
     const scroll = document.createElement('div');
     scroll.className = 'bt-settings-scroll';
     scroll.appendChild(settings);
     app.append(scroll, footer);
+    syncPendingSourcesButton();
   }
 
   function createEmptyUiRule(activeTab) {
@@ -3068,8 +3325,10 @@
       const translatedItem = parseListLine(translatedLines[i], translatedBlock.type);
       if (!sourceItem || !translatedItem) return null;
 
-      output.push(`${sourceItem.prefix}${formatSource(sourceItem.content, config)}`);
-      output.push(`${translatedItem.prefix}${translatedItem.content}`);
+      const original = `${sourceItem.prefix}${formatSource(sourceItem.content, config)}`;
+      const translation = `${translatedItem.prefix}${translatedItem.content}`;
+      output.push(...(config.paragraphSourcePosition === 'below'
+        ? [translation, original] : [original, translation]));
     }
 
     return output.join('\n');
@@ -3156,103 +3415,45 @@
   function renderMarkdownPair(sourceBlock, translatedBlock, config, index, originals) {
     const sourceText = sourceBlock?.text ?? '';
     const maskedText = translatedBlock?.text ?? '';
-
     const excluded = sourceText && shouldExcludeSource(sourceText, config);
-    if (excluded) {
-      log(config, `source block ${index + 1} excluded by pattern`);
-    }
+    if (excluded) log(config, `source block ${index + 1} excluded by pattern`);
     if (!sourceText || excluded) {
       return {
         text: restoreSourceMatches(maskedText, originals),
         markdown: translatedBlock?.type !== 'normal',
       };
     }
-
     const unmaskedText = originals?.size
       ? maskedText.replace(/\[\[P\d+\]\]/g, token => originals.has(token) ? '' : token)
       : maskedText;
     const translatedText = unmaskedText === maskedText ? maskedText : unmaskedText.trim();
-
     if (!translatedText) {
-      return {
-        text: renderSourceOnly(sourceBlock, config),
-        markdown: sourceBlock.type !== 'normal',
-      };
+      return { text: renderSourceOnly(sourceBlock, config), markdown: sourceBlock.type !== 'normal' };
     }
-
-    if (sourceBlock.type !== translatedBlock.type) {
-      return {
-        text: `${sourceText}${makeMarkdownSeparator(
-          config.sourceTranslationSeparator,
-          true
-        )}${translatedText}`,
-        markdown: true,
-      };
-    }
-
+    const markdownPair = (original, blankLine = true) => ({
+      text: joinParagraphPair(original, translatedText,
+        makeMarkdownSeparator(config.sourceTranslationSeparator, blankLine), config),
+      markdown: true,
+    });
+    if (sourceBlock.type !== translatedBlock.type) return markdownPair(sourceText);
     switch (sourceBlock.type) {
       case 'unordered-list':
       case 'ordered-list': {
-        const rendered = renderInterleavedList(
-          sourceBlock,
-          { ...translatedBlock, text: translatedText },
-          config
-        );
-        return rendered
-          ? { text: rendered, markdown: true }
-          : {
-              text: `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-              markdown: true,
-            };
+        const rendered = renderInterleavedList(sourceBlock, { ...translatedBlock, text: translatedText }, config);
+        return rendered ? { text: rendered, markdown: true } : markdownPair(sourceText);
       }
-
       case 'heading':
-        return {
-          text: `${renderHeadingSource(
-            sourceBlock,
-            config
-          )}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            false
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(renderHeadingSource(sourceBlock, config), false);
       case 'quote':
       case 'code':
-        return {
-          text: `${sourceText}${makeMarkdownSeparator(
-            config.sourceTranslationSeparator,
-            true
-          )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(sourceText);
       case 'table':
-        return {
-          text: tablesAreCompatible(sourceBlock, translatedBlock)
-            ? `${renderTableSource(
-                sourceBlock,
-                config
-              )}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`
-            : `${sourceText}${makeMarkdownSeparator(
-                config.sourceTranslationSeparator,
-                true
-              )}${translatedText}`,
-          markdown: true,
-        };
-
+        return markdownPair(tablesAreCompatible(sourceBlock, translatedBlock)
+          ? renderTableSource(sourceBlock, config) : sourceText);
       default:
         return {
-          text: `${formatSource(sourceText, config)}${
-            config.sourceTranslationSeparator
-          }${translatedText}`,
+          text: joinParagraphPair(formatSource(sourceText, config), translatedText,
+            config.sourceTranslationSeparator, config),
           markdown: false,
         };
     }
@@ -3411,7 +3612,8 @@
       return messages;
     }
     if (!config.pluginEnabled) {
-      pendingSources.push({ disabled: true, capturedAt: Date.now() });
+      pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     if (glossarySaveTimer) await persistGlossaryStateNow(memoryGlossaryState);
@@ -3419,7 +3621,8 @@
     const glossary = await loadGlossaryState();
     if (generation !== pendingSourceGeneration) return messages;
     if (!config.enabled && !config.translationContextEnabled && !config.protectRules.some(rule => rule.input) && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
-      pendingSources.push({ disabled: true, capturedAt: Date.now() });
+      pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     const extracted = extractSource(messages, config);
@@ -3436,6 +3639,7 @@
     const protection = source && protectSourceMatches(messages, extracted, config);
     let requestMessages = protection?.messages ?? messages;
     pending.originals = protection?.originals;
+    pending.dialogueSource = protection?.source ?? source;
 
     const glossaryBlock = source
       ? collectGlossaryGuidance(protection?.source ?? source, glossary, config)
@@ -3494,6 +3698,7 @@
     if (type !== 'translate') return content;
 
     const pending = pendingSources.shift();
+    syncPendingSourcesButton();
     const generation = pendingSourceGeneration;
     const config = await getConfig();
     if (pending?.retryGuardMarker || (config.pluginEnabled && config.retryGuardEnabled)) {
@@ -3557,7 +3762,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Bilingual v1.3.4 glossary loaded.');
+      log(config, 'Bilingual v1.3.11 glossary loaded.');
     } catch (error) {
       console.error(
         `[Bilingual Translation] initialization failed: ${error?.message ?? error}`
