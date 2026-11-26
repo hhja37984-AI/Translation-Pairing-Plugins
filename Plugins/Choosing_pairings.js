@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.10
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.11
 //@api 3.0
-//@version 1.3.10
+//@version 1.3.11
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -1080,7 +1080,7 @@
         .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
         .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
         .bt-option-source { position: relative; isolation: isolate; color: inherit; white-space: nowrap; }
-        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(255, 235, 59, 0.4)); border-radius: 1px; pointer-events: none; }
+        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(255, 235, 59, 0.3)); border-radius: 1px; pointer-events: none; }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
         .bt-save { position: relative; }
@@ -4154,7 +4154,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.10 loaded.');
+      log(config, 'Versa v1.3.11 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
