@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️ 원문-번역문 병기 v1.3.2
+//@display-name ✌️ 원문-번역문 병기 v1.3.3
 //@api 3.0
-//@version 1.3.2
+//@version 1.3.3
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Paragraphs_pairing.js
 
 (() => {
@@ -971,6 +971,9 @@
         .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
+        .bt-field.bt-name-field { display: grid; grid-template-columns: 20% 80%; align-items: center; }
+        .bt-name-field > .bt-label { margin-bottom: 0; padding-right: 8px; }
+        .bt-name-field > .bt-input { min-width: 0; }
         .bt-label { display: block; margin-bottom: 8px; font-size: 1.05rem; font-weight: 700; }
         .bt-label-with-icon { display: inline-flex; align-items: center; gap: 8px; }
         .bt-label-icon { display: inline-flex; width: 18px; height: 18px; flex: 0 0 18px; }
@@ -1681,7 +1684,7 @@
     editor.dataset.ruleId = rule.id;
 
     const nameLabel = document.createElement('label');
-    nameLabel.className = 'bt-field';
+    nameLabel.className = 'bt-field bt-name-field';
     nameLabel.innerHTML = '<span class="bt-label">이름</span>';
     const nameInput = document.createElement('input');
     nameInput.className = 'bt-input';
@@ -2079,7 +2082,7 @@
           catch (error) { errorBox.textContent = `정규식 오류 (번역 시 건너뜀): ${error?.message ?? error}`; }
         };
         const nameLabel = document.createElement('label');
-        nameLabel.className = 'bt-field';
+        nameLabel.className = 'bt-field bt-name-field';
         nameLabel.innerHTML = '<span class="bt-label">이름</span>';
         const nameInput = document.createElement('input');
         nameInput.className = 'bt-input';
@@ -3554,7 +3557,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Bilingual v1.3.2 glossary loaded.');
+      log(config, 'Bilingual v1.3.3 glossary loaded.');
     } catch (error) {
       console.error(
         `[Bilingual Translation] initialization failed: ${error?.message ?? error}`
