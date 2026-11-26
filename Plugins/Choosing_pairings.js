@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.6
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.7
 //@api 3.0
-//@version 1.3.6
+//@version 1.3.7
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -758,7 +758,7 @@
       noneAllowed: true,
     });
 
-    const useSourceSpan = !(outputMode === 'dialogue' && validDialoguePosition.endsWith('inside')) && getInt('use_source_span', 1) !== 0;
+    const useSourceSpan = getInt('use_source_span', 1) !== 0;
 
     const sourceColor = decodeConfigString(
       getString('source_color', '#b6997c'),
@@ -1039,10 +1039,15 @@
         .bt-select-trigger::after { content: '▾'; float: right; margin-left: 8px; color: var(--bt-muted); }
         .bt-option-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.48); }
         .bt-option-popup { width: min(100%, 420px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid var(--bt-border); border-radius: 16px; background: var(--bt-panel); color: var(--bt-text); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3); }
-        .bt-option-choice { display: block; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
+        .bt-option-choice { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
         .bt-option-choice[aria-checked="true"] { background: var(--bt-button); box-shadow: inset 3px 0 var(--bt-selected); }
         .bt-option-choice:hover, .bt-option-choice:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
         .bt-option-choice:first-child { border-top: 0; }
+        .bt-option-label { min-width: 0; flex: 1; }
+        .bt-option-radio { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-left: auto; align-items: center; justify-content: center; border: 2px solid var(--bt-muted); border-radius: 50%; }
+        .bt-option-radio::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: 0; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
+        .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
         .bt-option-source { color: var(--bt-option-source, #b6997c); }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
@@ -1100,7 +1105,7 @@
         .bt-error { min-height: 1.4em; margin: -5px 0 10px; color: #d66f6f; font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status { text-align: center; min-height: 1.4em; margin: 0 0 8px; color: var(--bt-muted); font-size: 0.99rem; white-space: pre-wrap; }
         .bt-status[data-error="true"] { color: #d66f6f; }
-        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 0 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
+        .bt-settings-footer { flex: 0 0 auto; z-index: 35; margin: 0 -18px; padding: 8px 18px 18px; border-top: 1px solid var(--bt-border); background: linear-gradient(to bottom, color-mix(in srgb, var(--bt-bg) 94%, transparent), var(--bt-bg) 22%); backdrop-filter: blur(7px); }
         .bt-save { display: block; width: 90%; margin-inline: auto; border: 1px solid var(--bt-border); border-radius: 7.2px; padding: 13px; background: var(--bt-button); font-size: 1.1rem; font-weight: 700; cursor: pointer; }
         .bt-wrap, .bt-settings-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--bt-border) 72%, transparent) transparent; }
         .bt-wrap::-webkit-scrollbar, .bt-settings-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -1126,6 +1131,9 @@
           .bt-tab { padding-inline: 3px; font-size: 0.88rem; }
           .bt-tooltip { font-size: 0.84rem; }
           .bt-regex-heading-title { font-size: 1rem; }
+          .bt-regex-heading { min-height: 36px; padding-block: 6px; }
+          .bt-regex-section .bt-row { min-height: 48px; }
+          .bt-regex-section .bt-open { padding-block: 10px; }
           .bt-open, .bt-empty, .bt-add, .bt-save, .bt-readonly-hint { font-size: 1rem; }
           .bt-regex-section .bt-add { font-size: 1rem; }
           .bt-inline-editor .bt-label { font-size: 0.95rem; }
@@ -1477,10 +1485,10 @@
         label: '대사 원문 삽입 위치',
         description: '',
         options: [
-          ['outside', '따옴표 밖: “번역문”(원문)'],
-          ['inside', '따옴표 안: “번역문 (원문)”'],
-          ['source-outside', '따옴표 밖: “원문”(번역문)'],
-          ['source-inside', '따옴표 안: “원문 (번역문)”'],
+          ['outside', '“번역문” (원문)'],
+          ['inside', '“번역문 (원문)”'],
+          ['source-outside', '“원문” (번역문)'],
+          ['source-inside', '“원문 (번역문)”'],
         ],
       },
       {
@@ -1757,12 +1765,10 @@
 
     const syncConditionalSettings = () => {
       const position = inputs.get('dialogue_source_position')?.value ?? 'outside';
-      const inside = getUiMode() === 'dialogue' && position.endsWith('inside');
       const uppercaseDescription = inputs.get('uppercase_block_pairing')?.closest('.bt-field')?.querySelector('.bt-description');
       if (uppercaseDescription) uppercaseDescription.textContent =
         '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: ' +
         (position.startsWith('source-') ? 'CHARACTER (캐릭터)' : '캐릭터 (CHARACTER)');
-      settings.querySelectorAll('[data-setting-group="span"]').forEach(element => { element.hidden = inside; });
     };
     inputs.get('dialogue_source_position')?.addEventListener('change', syncConditionalSettings);
     syncConditionalSettings();
@@ -1884,16 +1890,18 @@
     trigger.setAttribute('aria-expanded', 'false');
     const options = item.options ?? [];
     const renderChoice = (button, text) => {
-      button.replaceChildren();
+      const label = document.createElement('span');
+      label.className = 'bt-option-label';
+      button.replaceChildren(label);
       for (const part of text.split(/(번역문|원문)/g)) {
         const span = document.createElement('span');
         span.textContent = part;
         if (part === '원문') {
           span.className = 'bt-option-source';
-          span.style.color = settingsDraft?.config.source_color || '#b6997c';
+          span.style.setProperty('color', 'var(--bt-option-source, #b6997c)', 'important');
         }
         if (part === '번역문') span.className = 'bt-option-translation';
-        button.appendChild(span);
+        label.appendChild(span);
       }
     };
     const syncLabel = () => renderChoice(trigger, (options.find(option => option[0] === trigger.value) ?? options[0] ?? ['', ''])[1]);
@@ -1902,7 +1910,6 @@
       if (trigger.getAttribute('aria-expanded') === 'true') return;
       const overlay = document.createElement('div');
       overlay.className = 'bt-option-overlay';
-      overlay.style.setProperty('--bt-option-source', settingsDraft?.config.source_color || '#b6997c');
       const popup = document.createElement('div');
       popup.className = 'bt-option-popup';
       popup.setAttribute('role', 'dialog');
@@ -1925,6 +1932,10 @@
         choice.setAttribute('role', 'radio');
         choice.setAttribute('aria-checked', String(value === trigger.value));
         renderChoice(choice, text);
+        const indicator = document.createElement('span');
+        indicator.className = 'bt-option-radio';
+        indicator.setAttribute('aria-hidden', 'true');
+        choice.appendChild(indicator);
         choice.addEventListener('click', () => {
           trigger.value = value;
           syncLabel();
@@ -2207,7 +2218,7 @@
     title.className = 'bt-regex-heading-title';
     title.textContent = meta.label;
     heading.appendChild(title);
-    heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
+    if (meta.tooltip) heading.appendChild(createHelpButton(meta.label, meta.tooltip, section));
     section.appendChild(heading);
     if (meta.description) {
       const description = document.createElement('span');
@@ -3849,7 +3860,7 @@
         start: config.dialogueSourcePosition.startsWith('source-') ? translatedBlocks[i].start : translatedBlocks[i].end,
         end: translatedBlocks[i].end,
         replacement: config.dialogueSourcePosition.startsWith('source-')
-          ? `${formatSource(sourceText, config)} (${translatedText})`
+          ? `${sourceText} ${formatSourceParenthetical(translatedText, config)}`
           : ` ${formatSourceParenthetical(sourceText, config)}`,
         kind: 'uppercase',
       });
@@ -3911,19 +3922,20 @@
       if (position.startsWith('source-')) {
         const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
         const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
-        const original = inside ? sourceDialogue.content : formatSource(sourceDialogue.content, config);
+        const original = sourceDialogue.content;
+        const parenthetical = formatSourceParenthetical(translatedDialogue.content, config);
         edits.push({
           start: translatedDialogue.start,
           end: translatedDialogue.end,
           replacement: inside
-            ? `${opening}${original} (${translatedDialogue.content})${closing}`
-            : `${opening}${original}${closing}(${translatedDialogue.content})`,
+            ? `${opening}${original} ${parenthetical}${closing}`
+            : `${opening}${original}${closing} ${parenthetical}`,
           kind: 'dialogue',
         });
       } else {
-        const original = formatSourceParenthetical(sourceDialogue.content, config, !inside);
+        const original = formatSourceParenthetical(sourceDialogue.content, config);
         const index = inside ? translatedDialogue.contentEnd : translatedDialogue.end;
-        edits.push({ start: index, end: index, replacement: (inside ? ' ' : '') + original, kind: 'dialogue' });
+        edits.push({ start: index, end: index, replacement: ' ' + original, kind: 'dialogue' });
       }
     }
 
@@ -4118,7 +4130,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.6 loaded.');
+      log(config, 'Versa v1.3.7 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
