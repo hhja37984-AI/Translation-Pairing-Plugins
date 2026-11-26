@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.9
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.10
 //@api 3.0
-//@version 1.3.9
+//@version 1.3.10
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -169,7 +169,11 @@
 
   function syncUnsavedNotice() {
     const notice = document.getElementById('bt-unsaved-notice');
-    if (notice) notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    if (notice) {
+      notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+      const head = notice.closest('.bt-head');
+      if (head) head.dataset.unsaved = String(!notice.hidden);
+    }
   }
 
   let ruleSaveTimer = null;
@@ -999,9 +1003,10 @@
         .bt-fixed-top { position: sticky; top: -20px; z-index: 40; margin: -20px -18px 0; padding: 20px 18px 0; background: var(--bt-bg); }
         .bt-wrap-settings .bt-fixed-top { position: relative; top: auto; flex: 0 0 auto; }
         .bt-settings-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding-top: 2px; }
-        .bt-head { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
+        .bt-head { position: relative; display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; margin-bottom: 18px; }
         .bt-title { padding-right: 10px; margin: 0; font-size: 1.5rem; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .bt-description.bt-unsaved-notice { grid-column: 1 / -1; text-align: right; margin: 0; color: #d66f6f; }
+        .bt-description.bt-unsaved-notice { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+        .bt-head[data-unsaved="true"]::after { content: attr(data-unsaved-text); position: absolute; top: 100%; left: 0; right: 0; color: #d66f6f; font-size: 0.78rem; font-weight: 400; line-height: 1.2; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
         .bt-unsaved-notice[hidden] { display: none; }
         .bt-icon { width: 42px; height: 42px; border: 0; background: transparent; font-size: 2rem; line-height: 1; cursor: pointer; border-radius: 6px; }
         .bt-icon:active, .bt-tab:active, .bt-add:active, .bt-save:active { background: color-mix(in srgb, var(--bt-text) 10%, transparent); }
@@ -1075,7 +1080,7 @@
         .bt-option-choice[aria-checked="true"] .bt-option-radio { color: var(--bt-option-accent, #3b82f6); border-color: currentColor; }
         .bt-option-choice[aria-checked="true"] .bt-option-radio::after { opacity: 1; }
         .bt-option-source { position: relative; isolation: isolate; color: inherit; white-space: nowrap; }
-        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(182, 153, 124, 0.3)); border-radius: 2px; pointer-events: none; }
+        .bt-option-source::before { content: ''; position: absolute; inset: -0.08em -0.12em; z-index: -1; background: var(--bt-option-highlight, rgba(255, 235, 59, 0.4)); border-radius: 1px; pointer-events: none; }
         .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
         #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
         .bt-save { position: relative; }
@@ -1228,6 +1233,8 @@
     notice.textContent = '저장하지 않은 설정값이 있습니다.';
     notice.setAttribute('role', 'status');
     notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    head.dataset.unsaved = String(!notice.hidden);
+    head.dataset.unsavedText = notice.textContent;
     head.append(left, heading, close, notice);
     return { head, left };
   }
@@ -1405,6 +1412,8 @@
     notice.textContent = '저장하지 않은 설정값이 있습니다.';
     notice.setAttribute('role', 'status');
     notice.hidden = !settingsDraft || settingsSnapshot(settingsDraft) === settingsSavedSnapshot;
+    head.dataset.unsaved = String(!notice.hidden);
+    head.dataset.unsavedText = notice.textContent;
     head.append(left, heading, close, notice);
     wrapper.append(head, alternative);
     return { wrapper, closeMenu: () => setOpened(false) };
@@ -1893,7 +1902,7 @@
         saveNoticeTimer = setTimeout(() => {
           saveNoticeTimer = null;
           setButtonNotice(save);
-        }, 1800);
+        }, 1000);
       } catch (error) {
         status.dataset.error = 'true';
         status.textContent = `저장하지 못했습니다: ${error?.message ?? error}`;
@@ -1930,7 +1939,7 @@
           pendingSourceNoticeTimer = null;
           pendingSourceNotice = '';
           syncPendingSourcesButton();
-        }, 1800);
+        }, 1000);
       }
       syncPendingSourcesButton();
     });
@@ -4145,7 +4154,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.9 loaded.');
+      log(config, 'Versa v1.3.10 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
