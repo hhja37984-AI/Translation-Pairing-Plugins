@@ -192,8 +192,18 @@
       version: 1,
       translationRules: [],
       excludeRules: [],
-      protectRules: [],
+      protectRules: [createAssetMaidExampleRule()],
+      assetMaidExampleSeeded: true,
       contextRules: [],
+    };
+  }
+
+  function createAssetMaidExampleRule() {
+    return {
+      id: makeRuleId(),
+      name: '에셋 메이드',
+      input: '<div class="am-illustration-projection"[\\s\\S]*?<\\/div>',
+      ignoreCase: false,
     };
   }
 
@@ -237,12 +247,19 @@
           }))
       : [];
 
+    const protectRules = normalizeMatchRules(source.protectRules);
+    if (source.assetMaidExampleSeeded !== true) {
+      const example = createAssetMaidExampleRule();
+      if (!protectRules.some(rule => rule.input === example.input)) protectRules.push(example);
+    }
+
     return {
       ...source,
       version: 1,
       translationRules,
       excludeRules: normalizeMatchRules(source.excludeRules),
-      protectRules: normalizeMatchRules(source.protectRules),
+      protectRules,
+      assetMaidExampleSeeded: true,
       contextRules,
     };
   }
@@ -401,6 +418,9 @@
 
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       memoryRuleState = normalizeRuleState(parsed);
+      if (parsed?.assetMaidExampleSeeded !== true) {
+        await saveRuleState(memoryRuleState);
+      }
       return normalizeRuleState(memoryRuleState);
     } catch (error) {
       console.warn(
@@ -1832,7 +1852,13 @@
   }
 
   function getRuleSectionMeta(type) {
-    if (type === 'protect') return { key: 'protectRules', label: '(임시)' };
+    if (type === 'protect') {
+      return {
+        key: 'protectRules',
+        label: '원문만 출력',
+        description: '에셋 출력식, 플러그인 용 특수 패턴 등 번역이 필요하지 않은 문단',
+      };
+    }
     if (type === 'translation') {
       return {
         key: 'translationRules',
