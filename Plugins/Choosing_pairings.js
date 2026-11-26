@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.11
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.12
 //@api 3.0
-//@version 1.3.11
+//@version 1.3.12
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -3943,6 +3943,20 @@
       const translatedDialogue = translatedDialogues[i];
       const position = config.dialogueSourcePosition;
       const inside = position.endsWith('inside');
+      if (inside && config.useSourceSpan) {
+        const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
+        const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
+        const sourceFirst = position.startsWith('source-');
+        const dialogue = sourceFirst ? sourceDialogue.content : translatedDialogue.content;
+        const paired = sourceFirst ? translatedDialogue.content : sourceDialogue.content;
+        edits.push({
+          start: translatedDialogue.start,
+          end: translatedDialogue.end,
+          replacement: `<span>${opening}${dialogue} ${formatSourceParenthetical(paired, config)}${closing}</span>`,
+          kind: 'dialogue',
+        });
+        continue;
+      }
       if (position.startsWith('source-')) {
         const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
         const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
@@ -4154,7 +4168,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.11 loaded.');
+      log(config, 'Versa v1.3.12 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
