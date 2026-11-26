@@ -1,7 +1,7 @@
 //@name 원문 번역문 병기 플러그인
-//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.2
+//@display-name ✌️💬 병기 방식 선택 플러그인 v1.3.5
 //@api 3.0
-//@version 1.3.2
+//@version 1.3.5
 //@update-url https://raw.githubusercontent.com/hhja37984-AI/Translation-Pairing-Plugins/refs/heads/test/Plugins/Choosing_pairings.js
 
 (() => {
@@ -23,11 +23,22 @@
   const CONFIG_STORAGE_KEY = 'bilingual_translation_config_v1';
   const pendingSources = [];
   let pendingSourceGeneration = 0;
+  let pendingSourceNotice = '';
+  let pendingSourceNoticeTimer = null;
+
+  function syncPendingSourcesButton() {
+    if (typeof document === 'undefined') return;
+    const button = document.getElementById('bt-clear-sources');
+    if (!button) return;
+    button.disabled = pendingSources.length <= 1;
+    button.textContent = pendingSourceNotice || `수집한 원문 (${pendingSources.length}개) 비우기`;
+  }
 
   function clearPendingSources() {
     const count = pendingSources.length;
     pendingSources.length = 0;
     pendingSourceGeneration += 1;
+    syncPendingSourcesButton();
     return count;
   }
   const RETRY_GUARD_MARKER = '<!-- start -->';
@@ -45,6 +56,7 @@
     if (pending.generation !== pendingSourceGeneration) return messages;
     if (!config.retryGuardEnabled) {
       pendingSources.push(pending);
+      syncPendingSourcesButton();
       return messages;
     }
     const result = messages.slice();
@@ -62,6 +74,7 @@
     }
     pending.retryGuardMarker = RETRY_GUARD_MARKER;
     pendingSources.push(pending);
+    syncPendingSourcesButton();
     return result;
   }
 
@@ -130,6 +143,7 @@
   let ruleSaveChain = Promise.resolve();
   const expandedRuleIds = {
     exclude: new Set(),
+    protect: new Set(),
     translation: new Set(),
     context: new Set(),
   };
@@ -195,6 +209,8 @@
       version: 1,
       translationRules: [],
       excludeRules: [],
+      protectRules: [createAssetMaidExampleRule()],
+      assetMaidExampleSeeded: true,
       contextRules: [],
     };
   }
@@ -215,8 +231,8 @@
           }))
       : [];
 
-    const excludeRules = Array.isArray(source.excludeRules)
-      ? source.excludeRules
+    const normalizeMatchRules = (rules) => Array.isArray(rules)
+      ? rules
           .filter((rule) => rule && typeof rule === 'object')
           .map((rule) => ({
             id: String(rule.id || makeRuleId()),
@@ -239,11 +255,19 @@
           }))
       : [];
 
+    const protectRules = normalizeMatchRules(source.protectRules);
+    if (source.assetMaidExampleSeeded !== true) {
+      const example = createAssetMaidExampleRule();
+      if (!protectRules.some(rule => rule.input === example.input)) protectRules.push(example);
+    }
+
     return {
       ...source,
       version: 1,
       translationRules,
-      excludeRules,
+      excludeRules: normalizeMatchRules(source.excludeRules),
+      protectRules,
+      assetMaidExampleSeeded: true,
       contextRules,
     };
   }
@@ -402,6 +426,9 @@
 
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       memoryRuleState = normalizeRuleState(parsed);
+      if (parsed?.assetMaidExampleSeeded !== true) {
+        await saveRuleState(memoryRuleState);
+      }
       return normalizeRuleState(memoryRuleState);
     } catch (error) {
       console.warn(
@@ -702,7 +729,9 @@
     const dialogueSourcePosition = getString(
       'dialogue_source_position',
       'outside'
-    ).trim().toLowerCase() === 'inside' ? 'inside' : 'outside';
+    ).trim().toLowerCase();
+    const validDialoguePosition = ['outside', 'inside', 'source-outside', 'source-inside'].includes(dialogueSourcePosition)
+      ? dialogueSourcePosition : 'outside';
     const uppercaseBlockPairing = getInt('uppercase_block_pairing', 1) !== 0;
 
     const sourceMessageRole = getString('source_message_role', 'any')
@@ -719,7 +748,7 @@
       noneAllowed: true,
     });
 
-    const useSourceSpan = !(outputMode === 'dialogue' && dialogueSourcePosition === 'inside') && getInt('use_source_span', 1) !== 0;
+    const useSourceSpan = !(outputMode === 'dialogue' && validDialoguePosition.endsWith('inside')) && getInt('use_source_span', 1) !== 0;
 
     const sourceColor = decodeConfigString(
       getString('source_color', '#b6997c'),
@@ -783,7 +812,7 @@
       pluginEnabled,
       enabled,
       outputMode,
-      dialogueSourcePosition,
+      dialogueSourcePosition: validDialoguePosition,
       uppercaseBlockPairing,
       sourceMessageRole,
       sourceStartPattern,
@@ -807,6 +836,7 @@
       translationStripPatterns,
       translationRules: ruleState.translationRules,
       uiExcludeRules: ruleState.excludeRules,
+      protectRules: ruleState.protectRules,
       contextRules: ruleState.contextRules,
       debug,
     };
@@ -833,8 +863,8 @@
 
     let flags = '';
     if (
-      (type === 'translation' || type === 'context') &&
-      rule.global !== false
+      type === 'protect' ||
+      ((type === 'translation' || type === 'context') && rule.global !== false)
     ) flags += 'g';
     if (rule.ignoreCase === true) flags += 'i';
     return new RegExp(input, flags);
@@ -967,6 +997,9 @@
         .bt-add { width: 100%; margin-top: 14px; border: 1px solid var(--bt-border); border-radius: 12px; padding: 12px; background: var(--bt-button); font-size: 1.1rem; cursor: pointer; }
         .bt-regex-section .bt-add { font-size: 0.92rem; }
         .bt-field { display: block; margin-bottom: 18px; }
+        .bt-field.bt-name-field { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+        .bt-name-field > .bt-label { margin-bottom: 0; padding-right: 8px; }
+        .bt-name-field > .bt-input { min-width: 0; }
         .bt-label { display: block; margin-bottom: 8px; font-size: 1.05rem; font-weight: 700; }
         .bt-label-with-icon { display: inline-flex; align-items: center; gap: 8px; }
         .bt-label-icon { display: inline-flex; width: 18px; height: 18px; flex: 0 0 18px; }
@@ -992,6 +1025,18 @@
         .bt-mode-option[hidden] { display: none !important; }
         .bt-settings [hidden] { display: none !important; }
         select.bt-input, select.bt-input option { color: var(--bt-text); background: var(--bt-panel); }
+        .bt-select-trigger { text-align: left; cursor: pointer; }
+        .bt-select-trigger::after { content: '▾'; float: right; margin-left: 8px; color: var(--bt-muted); }
+        .bt-option-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.48); }
+        .bt-option-popup { width: min(100%, 420px); max-height: calc(100dvh - 40px); overflow-y: auto; border: 1px solid var(--bt-border); border-radius: 16px; background: var(--bt-panel); color: var(--bt-text); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3); }
+        .bt-option-title { padding: 20px; font-size: 1.1rem; font-weight: 700; }
+        .bt-option-choice, .bt-option-cancel { display: block; width: 100%; min-height: 52px; border: 0; border-top: 1px solid var(--bt-border); padding: 14px 20px; background: transparent; color: var(--bt-text); text-align: left; font: inherit; cursor: pointer; }
+        .bt-option-choice[aria-checked="true"] { background: var(--bt-button); box-shadow: inset 3px 0 var(--bt-selected); }
+        .bt-option-choice:hover, .bt-option-choice:focus-visible, .bt-option-cancel:focus-visible { background: var(--bt-button); outline: 2px solid var(--bt-selected); outline-offset: -2px; }
+        .bt-option-cancel { text-align: center; color: var(--bt-muted); }
+        .bt-option-source { color: var(--bt-option-source, #b6997c); }
+        .bt-option-translation { color: var(--bt-option-translation, var(--bt-text)); }
+        #bt-clear-sources:disabled { opacity: 0.5; cursor: default; }
         .bt-settings { padding-top: 2px; }
         .bt-setting-divider { min-height: 40px; padding: 8px 0; position: sticky; top: var(--bt-sticky-offset); z-index: 20; display: flex; align-items: center; gap: 12px; margin: 20px 0 17px; color: var(--bt-muted); font-size: 0.9rem; text-align: center; background: var(--bt-bg); }
         .bt-setting-divider::before, .bt-setting-divider::after { content: ''; flex: 1; height: 1px; background: var(--bt-border); }
@@ -1423,13 +1468,15 @@
         options: [
           ['outside', '따옴표 밖: “번역문”(원문)'],
           ['inside', '따옴표 안: “번역문 (원문)”'],
+          ['source-outside', '따옴표 밖: “원문”(번역문)'],
+          ['source-inside', '따옴표 안: “원문 (번역문)”'],
         ],
       },
       {
         key: 'uppercase_block_pairing',
         type: 'checkbox',
-        label: '독립 대문자 블록 병기',
-        description: '문단 구조가 안전하게 대응될 때 대문자 원문 블록을 번역문 뒤에 붙입니다.',
+        label: '대문자 병기',
+        description: '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: 캐릭터 (CHARACTER)',
       },
       ] : []),
       { divider: '번역 원문 찾기' },
@@ -1547,7 +1594,7 @@
         key: 'retry_guard_enabled',
         type: 'checkbox',
         label: '재시도 중복 방지',
-        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다. (기본: OFF)',
+        description: '요청에 식별 문구를 넣어 재시도 시 원문 수집과 이전 메시지·어휘집 주입의 반복을 방지합니다.',
       },
       {
         key: 'keep_reasoning_blocks',
@@ -1642,15 +1689,7 @@
         input.addEventListener('change', syncOffStyle);
         syncOffStyle();
       } else if (item.type === 'select') {
-        input = document.createElement('select');
-        input.className = 'bt-input';
-        for (const [value, text] of item.options ?? []) {
-          const option = document.createElement('option');
-          option.value = value;
-          option.textContent = text;
-          input.appendChild(option);
-        }
-        input.value = settingsDraft.config[item.key] ?? item.options?.[0]?.[0] ?? '';
+        input = createPopupSelect(item, settingsDraft.config[item.key] ?? item.options?.[0]?.[0] ?? '');
       } else if (item.type === 'textarea') {
         input = document.createElement('textarea');
         input.className = item.tall ? 'bt-area bt-context-template' : 'bt-area';
@@ -1706,7 +1745,12 @@
     }
 
     const syncConditionalSettings = () => {
-      const inside = getUiMode() === 'dialogue' && inputs.get('dialogue_source_position')?.value === 'inside';
+      const position = inputs.get('dialogue_source_position')?.value ?? 'outside';
+      const inside = getUiMode() === 'dialogue' && position.endsWith('inside');
+      const uppercaseDescription = inputs.get('uppercase_block_pairing')?.closest('.bt-field')?.querySelector('.bt-description');
+      if (uppercaseDescription) uppercaseDescription.textContent =
+        '서술 중 대문자 원문으로 이루어진 문단을 번역문과 병기합니다. 예: ' +
+        (position.startsWith('source-') ? 'CHARACTER (캐릭터)' : '캐릭터 (CHARACTER)');
       settings.querySelectorAll('[data-setting-group="span"]').forEach(element => { element.hidden = inside; });
     };
     inputs.get('dialogue_source_position')?.addEventListener('change', syncConditionalSettings);
@@ -1783,13 +1827,19 @@
     const clearSources = document.createElement('button');
     clearSources.type = 'button';
     clearSources.className = 'bt-save';
-    clearSources.textContent = '수집한 원문 비우기';
+    clearSources.id = 'bt-clear-sources';
     clearSources.style.marginBottom = '8px';
     clearSources.title = '번역이 끝나거나 중단된 뒤 사용하세요. 병기 대기 중인 원문을 모두 비웁니다.';
     clearSources.addEventListener('click', () => {
       const count = clearPendingSources();
-      status.dataset.error = 'false';
-      status.textContent = `수집한 원문 ${count}건을 비웠습니다.`;
+      pendingSourceNotice = `수집한 원문 ${count}건을 비웠습니다`;
+      if (pendingSourceNoticeTimer) clearTimeout(pendingSourceNoticeTimer);
+      pendingSourceNoticeTimer = setTimeout(() => {
+        pendingSourceNoticeTimer = null;
+        pendingSourceNotice = '';
+        syncPendingSourcesButton();
+      }, 1800);
+      syncPendingSourcesButton();
     });
     footer.append(status, clearSources, save);
 
@@ -1797,6 +1847,102 @@
     scroll.className = 'bt-settings-scroll';
     scroll.appendChild(settings);
     app.append(scroll, footer);
+    syncPendingSourcesButton();
+  }
+
+  function createPopupSelect(item, initialValue) {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'bt-input bt-select-trigger';
+    trigger.value = initialValue;
+    trigger.setAttribute('aria-label', item.label);
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    const options = item.options ?? [];
+    const renderChoice = (button, text) => {
+      button.replaceChildren();
+      for (const part of text.split(/(번역문|원문)/g)) {
+        const span = document.createElement('span');
+        span.textContent = part;
+        if (part === '원문') span.className = 'bt-option-source';
+        if (part === '번역문') span.className = 'bt-option-translation';
+        button.appendChild(span);
+      }
+    };
+    const syncLabel = () => renderChoice(trigger, (options.find(option => option[0] === trigger.value) ?? options[0] ?? ['', ''])[1]);
+    trigger.addEventListener('click', event => {
+      event.preventDefault();
+      if (trigger.getAttribute('aria-expanded') === 'true') return;
+      const overlay = document.createElement('div');
+      overlay.className = 'bt-option-overlay';
+      overlay.style.setProperty('--bt-option-source', settingsDraft?.config.source_color || '#b6997c');
+      const popup = document.createElement('div');
+      popup.className = 'bt-option-popup';
+      popup.setAttribute('role', 'dialog');
+      popup.setAttribute('aria-modal', 'true');
+      popup.setAttribute('aria-label', item.label);
+      const title = document.createElement('div');
+      title.className = 'bt-option-title';
+      title.textContent = item.label;
+      const list = document.createElement('div');
+      list.className = 'bt-option-list';
+      list.setAttribute('role', 'radiogroup');
+      list.setAttribute('aria-label', item.label);
+      const buttons = [];
+      const close = () => {
+        overlay.remove();
+        trigger.setAttribute('aria-expanded', 'false');
+        if (trigger.isConnected) trigger.focus();
+      };
+      for (const [value, text] of options) {
+        const choice = document.createElement('button');
+        choice.type = 'button';
+        choice.className = 'bt-option-choice';
+        choice.setAttribute('role', 'radio');
+        choice.setAttribute('aria-checked', String(value === trigger.value));
+        renderChoice(choice, text);
+        choice.addEventListener('click', () => {
+          trigger.value = value;
+          syncLabel();
+          trigger.dispatchEvent(new Event('input', { bubbles: true }));
+          trigger.dispatchEvent(new Event('change', { bubbles: true }));
+          close();
+        });
+        buttons.push(choice);
+        list.appendChild(choice);
+      }
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'bt-option-cancel';
+      cancel.textContent = '취소';
+      cancel.addEventListener('click', close);
+      popup.append(title, list, cancel);
+      overlay.appendChild(popup);
+      overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+      overlay.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const index = buttons.indexOf(document.activeElement);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+            : (index + (event.key === 'ArrowUp' ? -1 : 1) + buttons.length) % buttons.length;
+          buttons[next]?.focus();
+        } else if (event.key === 'Tab') {
+          const controls = [...buttons, cancel];
+          const index = controls.indexOf(document.activeElement);
+          event.preventDefault();
+          controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length]?.focus();
+        }
+      });
+      trigger.setAttribute('aria-expanded', 'true');
+      document.getElementById('bt-app').appendChild(overlay);
+      (buttons[options.findIndex(option => option[0] === trigger.value)] ?? buttons[0] ?? cancel).focus();
+    });
+    syncLabel();
+    return trigger;
   }
 
   function createEmptyUiRule(activeTab) {
@@ -1823,7 +1969,7 @@
     editor.dataset.ruleId = rule.id;
 
     const nameLabel = document.createElement('label');
-    nameLabel.className = 'bt-field';
+    nameLabel.className = 'bt-field bt-name-field';
     nameLabel.innerHTML = '<span class="bt-label">이름</span>';
     const nameInput = document.createElement('input');
     nameInput.className = 'bt-input';
@@ -1845,7 +1991,7 @@
     let globalInput = null;
     let ignoreCaseInput = null;
 
-    if (activeTab === 'exclude') {
+    if (activeTab === 'exclude' || activeTab === 'protect') {
       const flags = document.createElement('div');
       flags.className = 'bt-flags';
       const iLabel = document.createElement('label');
@@ -1890,7 +2036,7 @@
       flags.append(gLabel, iLabel);
       outputLabel.appendChild(flags);
       editor.appendChild(outputLabel);
-    } else {
+    } else if (activeTab === 'exclude') {
       const outputHint = document.createElement('div');
       outputHint.className = 'bt-field';
       outputHint.innerHTML = '<span class="bt-label">OUT:</span>';
@@ -1994,6 +2140,13 @@
   }
 
   function getRuleSectionMeta(type) {
+    if (type === 'protect') {
+      return {
+        key: 'protectRules',
+        label: '원문만 출력',
+        description: '에셋 출력식, 플러그인 용 특수 패턴 등 번역이 필요하지 않은 문단',
+      };
+    }
     if (type === 'translation') {
       return {
         key: 'translationRules',
@@ -2214,7 +2367,7 @@
           catch (error) { errorBox.textContent = `정규식 오류 (번역 시 건너뜀): ${error?.message ?? error}`; }
         };
         const nameLabel = document.createElement('label');
-        nameLabel.className = 'bt-field';
+        nameLabel.className = 'bt-field bt-name-field';
         nameLabel.innerHTML = '<span class="bt-label">이름</span>';
         const nameInput = document.createElement('input');
         nameInput.className = 'bt-input';
@@ -2365,6 +2518,7 @@
       regexPage.className = 'bt-regex-page';
       regexPage.append(
         ...(getUiMode() === 'bilingual' ? [renderSingleRuleSection(state, 'exclude')] : []),
+        renderSingleRuleSection(state, 'protect'),
         renderSingleRuleSection(state, 'translation'),
         renderSingleRuleSection(state, 'context')
       );
@@ -2511,6 +2665,105 @@
       rawSourceStartPreview: '',
     };
   }
+
+  function createAssetMaidExampleRule() {
+    return {
+      id: makeRuleId(),
+      name: '에셋 메이드',
+      input: '<div class="am-illustration-projection"[\\s\\S]*?<\\/div>',
+      ignoreCase: false,
+    };
+  }
+
+
+  function protectSourceMatches(messages, extracted, config) {
+    const { source, sourceStart, sourceEnd, messageIndex } = extracted;
+    const ranges = [];
+    for (const rule of config.protectRules) {
+      if (!rule.input) continue;
+      try {
+        for (const match of source.matchAll(compileUiRegex(rule, 'protect'))) {
+          if (match[0]) ranges.push({ start: match.index, end: match.index + match[0].length });
+        }
+      } catch (error) {
+        warn(config, `invalid source protection regex "${getRuleLabel(rule)}": ${error?.message ?? error}`);
+      }
+    }
+    if (!ranges.length) return null;
+
+    // Merge overlaps so each character is masked and restored only once.
+    ranges.sort((a, b) => a.start - b.start);
+    const merged = [];
+    for (const range of ranges) {
+      const previous = merged[merged.length - 1];
+      if (previous && range.start < previous.end) previous.end = Math.max(previous.end, range.end);
+      else merged.push(range);
+    }
+
+    const usedTokens = new Set(messages.flatMap(message =>
+      getMessageContent(message).match(/\[\[P\d+\]\]/g) ?? []
+    ));
+    const originals = new Map();
+    let nextId = 1;
+    for (const range of merged) {
+      let token;
+      do {
+        token = `[[P${nextId++}]]`;
+      } while (usedTokens.has(token));
+      range.token = token;
+      originals.set(token, source.slice(range.start, range.end));
+    }
+
+    const message = messages[messageIndex];
+    const content = getMessageContent(message);
+    const rawSource = content.slice(sourceStart, sourceEnd);
+    const offset = sourceStart + rawSource.length - rawSource.trimStart().length;
+    let maskedSource = '';
+    let cursor = 0;
+    for (const { start, end, token } of merged) {
+      maskedSource += source.slice(cursor, start) + token;
+      cursor = end;
+    }
+    maskedSource += source.slice(cursor);
+
+    let partOffset = 0;
+    let rangeIndex = 0;
+    const maskPart = (part) => {
+      const partStart = partOffset;
+      partOffset += part.length;
+      let result = '';
+      let cursor = 0;
+      while (rangeIndex < merged.length) {
+        const { start, end, token } = merged[rangeIndex];
+        const localStart = offset + start - partStart;
+        const localEnd = offset + end - partStart;
+        if (localStart >= part.length) break;
+        if (localStart >= 0) result += part.slice(cursor, localStart) + token;
+        cursor = localEnd;
+        if (localEnd > part.length) break;
+        rangeIndex++;
+      }
+      return result + part.slice(cursor);
+    };
+
+    const nextContent = Array.isArray(message.content)
+      ? message.content.map(part => {
+          if (typeof part === 'string') return maskPart(part);
+          if (typeof part?.text === 'string') return { ...part, text: maskPart(part.text) };
+          return part;
+        })
+      : maskPart(content);
+    const nextMessages = messages.slice();
+    nextMessages[messageIndex] = { ...message, content: nextContent };
+    return { messages: nextMessages, source: maskedSource, originals };
+  }
+
+
+  function restoreSourceMatches(text, originals) {
+    if (!originals?.size || typeof text !== 'string') return text;
+    return text.replace(/\[\[P\d+\]\]/g, token => originals.get(token) ?? token);
+  }
+
 
   /* ---------------- Recent chat context ---------------- */
 
@@ -3198,24 +3451,25 @@
     }
   }
 
-  function renderMarkdownPair(sourceBlock, translatedBlock, config, index) {
+  function renderMarkdownPair(sourceBlock, translatedBlock, config, index, originals) {
     const sourceText = sourceBlock?.text ?? '';
-    const translatedText = translatedBlock?.text ?? '';
+    const maskedText = translatedBlock?.text ?? '';
 
-    if (sourceText && shouldExcludeSource(sourceText, config)) {
+    const excluded = sourceText && shouldExcludeSource(sourceText, config);
+    if (excluded) {
       log(config, `source block ${index + 1} excluded by pattern`);
+    }
+    if (!sourceText || excluded) {
       return {
-        text: translatedText,
+        text: restoreSourceMatches(maskedText, originals),
         markdown: translatedBlock?.type !== 'normal',
       };
     }
 
-    if (!sourceText) {
-      return {
-        text: translatedText,
-        markdown: translatedBlock?.type !== 'normal',
-      };
-    }
+    const unmaskedText = originals?.size
+      ? maskedText.replace(/\[\[P\d+\]\]/g, token => originals.has(token) ? '' : token)
+      : maskedText;
+    const translatedText = unmaskedText === maskedText ? maskedText : unmaskedText.trim();
 
     if (!translatedText) {
       return {
@@ -3239,7 +3493,7 @@
       case 'ordered-list': {
         const rendered = renderInterleavedList(
           sourceBlock,
-          translatedBlock,
+          { ...translatedBlock, text: translatedText },
           config
         );
         return rendered
@@ -3418,7 +3672,7 @@
 
     for (let i = 0; i < maxLength; i++) {
       renderedBlocks.push(
-        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i)
+        renderMarkdownPair(sourceBlocks[i], translatedBlocks[i], config, i, meta.originals)
       );
     }
 
@@ -3573,9 +3827,11 @@
       if (sourceText === translatedText) continue;
 
       edits.push({
-        start: translatedBlocks[i].end,
+        start: config.dialogueSourcePosition.startsWith('source-') ? translatedBlocks[i].start : translatedBlocks[i].end,
         end: translatedBlocks[i].end,
-        replacement: ` ${formatSourceParenthetical(sourceText, config)}`,
+        replacement: config.dialogueSourcePosition.startsWith('source-')
+          ? `${formatSource(sourceText, config)} (${translatedText})`
+          : ` ${formatSourceParenthetical(sourceText, config)}`,
         kind: 'uppercase',
       });
     }
@@ -3631,25 +3887,24 @@
     for (let i = 0; i < pairCount; i++) {
       const sourceDialogue = sourceDialogues[i];
       const translatedDialogue = translatedDialogues[i];
-      const original = formatSourceParenthetical(
-        sourceDialogue.content,
-        config,
-        config.dialogueSourcePosition === 'outside'
-      );
-      if (config.dialogueSourcePosition === 'inside') {
+      const position = config.dialogueSourcePosition;
+      const inside = position.endsWith('inside');
+      if (position.startsWith('source-')) {
+        const opening = cleanedTranslated.slice(translatedDialogue.start, translatedDialogue.contentStart);
+        const closing = cleanedTranslated.slice(translatedDialogue.contentEnd, translatedDialogue.end);
+        const original = inside ? sourceDialogue.content : formatSource(sourceDialogue.content, config);
         edits.push({
-          start: translatedDialogue.contentEnd,
-          end: translatedDialogue.contentEnd,
-          replacement: ` ${original}`,
+          start: translatedDialogue.start,
+          end: translatedDialogue.end,
+          replacement: inside
+            ? `${opening}${original} (${translatedDialogue.content})${closing}`
+            : `${opening}${original}${closing}(${translatedDialogue.content})`,
           kind: 'dialogue',
         });
       } else {
-        edits.push({
-          start: translatedDialogue.end,
-          end: translatedDialogue.end,
-          replacement: original,
-          kind: 'dialogue',
-        });
+        const original = formatSourceParenthetical(sourceDialogue.content, config, !inside);
+        const index = inside ? translatedDialogue.contentEnd : translatedDialogue.end;
+        edits.push({ start: index, end: index, replacement: (inside ? ' ' : '') + original, kind: 'dialogue' });
       }
     }
 
@@ -3659,7 +3914,7 @@
       config
     );
     edits.push(...uppercase.edits);
-    const result = applyTextEdits(cleanedTranslated, edits);
+    const result = restoreSourceMatches(applyTextEdits(cleanedTranslated, edits), meta.originals);
 
     if (config.debug) {
       const details = [
@@ -3694,14 +3949,16 @@
     }
     if (!config.pluginEnabled) {
       pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     if (glossarySaveTimer) await persistGlossaryStateNow(memoryGlossaryState);
     await glossarySaveChain;
     const glossary = await loadGlossaryState();
     if (generation !== pendingSourceGeneration) return messages;
-    if (!config.enabled && !config.translationContextEnabled && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
+    if (!config.enabled && !config.translationContextEnabled && !config.protectRules.some(rule => rule.input) && !glossary.entries.some(entry => entry.enabled && entry.input && entry.guide.trim())) {
       pendingSources.push({ disabled: true, generation, capturedAt: Date.now() });
+      syncPendingSourcesButton();
       return messages;
     }
     const extracted = extractSource(messages, config);
@@ -3715,14 +3972,26 @@
 
     log(config, `captured source (${source.length} chars)`);
 
-    const glossaryBlock = source ? collectGlossaryGuidance(source, glossary, config) : '';
+    const protection = source && protectSourceMatches(messages, extracted, config);
+    let requestMessages = protection?.messages ?? messages;
+    pending.originals = protection?.originals;
+    pending.dialogueSource = protection?.source ?? source;
+
+    const glossaryBlock = source
+      ? collectGlossaryGuidance(protection?.source ?? source, glossary, config)
+      : '';
+    const guidance = [
+      glossaryBlock,
+      protection
+        ? 'Copy each numbered placeholder (such as [[P1]]) into the translation exactly as written, once, at the corresponding position.'
+        : '',
+    ].filter(Boolean).join('\n\n');
     if (!source || !config.translationContextEnabled) {
       return capturePendingSource(
-        appendGlossaryGuidance(messages, glossaryBlock), pending, config
+        appendGlossaryGuidance(requestMessages, guidance), pending, config
       );
     }
 
-    let requestMessages = messages;
     try {
       const contextResult = await resolveRecentContext(extracted, config);
       if (!contextResult) {
@@ -3744,7 +4013,7 @@
             `lookupMs=${contextResult.lookupMs.toFixed(2)}`
         );
         requestMessages = injectRecentContext(
-          messages,
+          requestMessages,
           extracted,
           contextResult
         );
@@ -3757,7 +4026,7 @@
     }
 
     return capturePendingSource(
-      appendGlossaryGuidance(requestMessages, glossaryBlock), pending, config
+      appendGlossaryGuidance(requestMessages, guidance), pending, config
     );
   };
 
@@ -3765,13 +4034,16 @@
     if (type !== 'translate') return content;
 
     const pending = pendingSources.shift();
+    syncPendingSourcesButton();
     const generation = pendingSourceGeneration;
     const config = await getConfig();
     if (pending?.retryGuardMarker || (config.pluginEnabled && config.retryGuardEnabled)) {
       content = stripRetryGuardFromResponse(content);
     }
 
-    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) return content;
+    if (generation !== pendingSourceGeneration || pending?.disabled || !config.pluginEnabled || !config.enabled) {
+      return restoreSourceMatches(content, pending?.originals);
+    }
 
     if (!pending?.source) {
       warn(config, 'no captured source; returning translation unchanged.');
@@ -3781,7 +4053,7 @@
     try {
       const processor = config.outputMode === 'dialogue' ? makeDialogueOnly : makeBilingual;
       return processor(
-        pending.source,
+        config.outputMode === 'dialogue' ? pending.dialogueSource ?? pending.source : pending.source,
         String(content ?? ''),
         config,
         pending
@@ -3790,7 +4062,7 @@
       console.error(
         `[Versa] post-processing failed: ${error?.message ?? error}`
       );
-      return content;
+      return restoreSourceMatches(content, pending.originals);
     }
   };
 
@@ -3827,7 +4099,7 @@
       );
 
       const config = await getConfig();
-      log(config, 'Versa v1.3.2 loaded.');
+      log(config, 'Versa v1.3.5 loaded.');
     } catch (error) {
       console.error(
         `[Versa] initialization failed: ${error?.message ?? error}`
